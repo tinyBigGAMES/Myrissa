@@ -80,3 +80,24 @@ __recovery/
 
 # Boss dependency manager vendor folder https://github.com/HashLoad/boss
 modules/
+/.claude
+_checkpoint.cmd
+_checkpoint_base.cmd
+_distro.cmd
+bin/dump.txt
+/bin/output
+checkpoint.yml
+checkpoint.zip
+checkpoint_base.zip
+distro.yml
+/extlibs
+src/DllLoader/lib/DllLoader.obj
+/bin
+docs/Brief.mp4
+docs/DeepDive.m4a
+docs/Docs.html
+docs/Docs.md
+docs/Explainer.mp4
+docs/Infographic.png
+docs/Myrissa.pdf
+ref_README.md
