@@ -671,6 +671,8 @@ Access variadic arguments through the `varargs` intrinsic:
 |------------|-------------|
 | `varargs.count` | Total number of variadic arguments |
 | `varargs.next(Type)` | Retrieve and consume the next argument as the given type |
+| `varargs.get(Index, Type)` | Retrieve the argument at `Index` as the given type (no cursor advance) |
+| `varargs.reset()` | Reset the cursor back to the first argument |
 | `varargs.copy()` | Copy the current varargs cursor position |
 
 #### 🌉 External Routines
@@ -2017,11 +2019,15 @@ GetProcExpr     = "getproc" "(" Expression "," Expression ")" .
 ParamList       = ParamDecl { ";" ParamDecl } [ ";" "..." ] | "..." .
 
 VarArgsAccess   = "varargs" "." "next" "(" TypeExpr ")"
+                | "varargs" "." "get" "(" Expression "," TypeExpr ")"
+                | "varargs" "." "reset" "(" ")"
                 | "varargs" "." "copy" "(" ")"
                 | "varargs" "." "count" .
 ```
 
 - `varargs.next(TypeExpr)` -- Retrieves and consumes the next variadic argument.
+- `varargs.get(Expression, TypeExpr)` -- Retrieves the argument at the given index without advancing the cursor.
+- `varargs.reset()` -- Resets the cursor back to the first argument.
 - `varargs.count` -- Total number of variadic arguments passed.
 - `varargs.copy()` -- Returns a new `varargs` object with a copied cursor position.
 
