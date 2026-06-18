@@ -30,7 +30,7 @@ The language takes its syntax philosophy from Pascal and Oberon: `begin..end` bl
 
 Myrissa also ships as an embeddable DLL. Host applications can compile and execute Myrissa source at runtime through a flat C-compatible API, with pre-built bindings for C/C++ and Delphi/Free Pascal.
 
-## Who is Myrissa For?
+## 🎯 Who is Myrissa For?
 
 Myrissa is for developers who want native Win64 output without fighting the toolchain:
 
@@ -40,7 +40,7 @@ Myrissa is for developers who want native Win64 output without fighting the tool
 - **Windows developers**: Produce standalone Win64 binaries without shipping .NET, JVM, Python, or a pile of runtime DLLs alongside your application.
 
 
-## Key Features
+## ✨ Key Features
 
 - **Zero dependencies**: The full compiler pipeline runs in one invocation. No build system, no toolchain installation, no PATH configuration. One tool produces standalone native binaries.
 - **Native x64 output**: Ahead-of-time compiled to x86-64 machine code. No interpreter, no VM, no bytecode layer. The output runs bare metal.
@@ -59,7 +59,7 @@ Myrissa is for developers who want native Win64 output without fighting the tool
 - **Version info and icons**: Embed Windows version information and application icons into executables via directives. No post-build steps or resource compilers required.
 - **SSA optimization**: Mem2Reg, constant folding, and dead code elimination passes on the intermediate representation.
 
-## Getting Started
+## 🚀 Getting Started
 
 Every Myrissa program is a **module**. The module kind (`exe`, `dll`, `lib`, `unit`, or `mem`) is declared at the top of the file and determines what artifact gets built. An executable module has a `begin..end.` body that serves as the program entry point.
 
@@ -107,7 +107,7 @@ The output type is determined by the `module` declaration, not by CLI flags:
 | `module unit name` | (none) | Reusable module compiled inline into the importing module |
 
 
-## Documentation
+## 📖 Documentation
 
 The full language reference, BNF grammar, toolchain guide, API reference, and how-to recipes are in a single document:
 
@@ -116,7 +116,7 @@ The full language reference, BNF grammar, toolchain guide, API reference, and ho
 | **[Myrissa Language Reference](https://github.com/tinyBigGAMES/Myrissa/blob/main/docs/Myrissa.md)** | Complete language tour with examples: types, routines, records, objects, choices, sets, overlays, arrays, strings, control flow, exceptions, memory management, pointers, variadics, modules, external declarations, DLL loading, conditional compilation, unit testing, directives, the full BNF grammar, toolchain usage, and the embeddable API reference. |
 
 
-## Getting Myrissa
+## 🔨 Getting Myrissa
 
 ### Download the Latest Release
 
@@ -154,7 +154,7 @@ myrc -s hello.myr -d           # compile and launch debugger
 | **External toolchain** | None |
 
 
-## Building the Compiler from Source
+## 🔧 Building the Compiler from Source
 
 This section is for contributors who want to modify the Myrissa compiler itself. If you just want to write Myrissa programs, use the release download above.
 
@@ -178,7 +178,7 @@ git clone https://github.com/tinyBigGAMES/Myrissa.git
 3. The tester project compiles and executes every test case/demos and reports results
 
 
-## Contributing
+## 🤝 Contributing
 
 Myrissa is an open project and contributions are welcome at every level:
 
@@ -190,7 +190,7 @@ Myrissa is an open project and contributions are welcome at every level:
 Join our [Discord](https://discord.gg/Wb6z8Wam7p) to discuss development, ask questions, or share what you are building with Myrissa.
 
 
-## Support the Project
+## 💙 Support the Project
 
 If Myrissa saves you time, sparks an idea, or becomes part of something you ship:
 
@@ -200,14 +200,14 @@ If Myrissa saves you time, sparks an idea, or becomes part of something you ship
 - **Become a sponsor** via [GitHub Sponsors](https://github.com/sponsors/tinyBigGAMES) -- directly funds development
 
 
-## License
+## 📄 License
 
 Myrissa is licensed under the **Apache License 2.0**. See [LICENSE](https://github.com/tinyBigGAMES/Myrissa?tab=Apache-2.0-1-ov-file) for details.
 
 
-## Links
+## 🔗 Links
 
-- [Website](https://myrissa.org)
+- [Website](https://myrissa.org/)
 - [Discord](https://discord.gg/Wb6z8Wam7p)
 - [Bluesky](https://bsky.app/profile/tinybiggames.com)
 - [tinyBigGAMES](https://tinybiggames.com)
