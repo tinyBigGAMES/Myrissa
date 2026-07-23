@@ -8,7 +8,7 @@
 
 ## 💎 What is Myrissa?
 
-**Myrissa** is a zero-dependency native compiler for Windows x64. It takes clean, statically-typed `.myr` source code and produces native PE executables, DLLs, static libraries, in-memory executables, or reusable unit modules without requiring MSVC, MinGW, an external linker, or a separate runtime.
+**Myrissa** is a zero-dependency native compiler for Windows x64 and Linux x64. It takes clean, statically-typed `.myr` source code and produces native executables, dynamic libraries, static libraries, or reusable unit modules for either platform without requiring MSVC, MinGW, GCC, an external linker, or a separate runtime.
 
 Write a source file. Run `myrc`. Get native machine code.
 
@@ -44,10 +44,10 @@ Hello, Myrissa!
 Myrissa is designed around one direct workflow:
 
 ```text
-write .myr  ->  run myrc  ->  get native Win64 output
+write .myr  ->  run myrc  ->  get native Win64 or Linux64 output
 ```
 
-The language keeps a Pascal/Oberon-style structure, but the toolchain is intentionally modern: native x64 output, built-in diagnostics, built-in debugger support, built-in LSP support, and a DLL API for embedding the compiler into other tools.
+The language keeps a Pascal/Oberon-style structure, but the toolchain is intentionally modern: native x64 output for both platforms, cross-compiled from a single Windows host, built-in diagnostics, built-in debugger support, built-in LSP support, and a DLL API for embedding the compiler into other tools.
 
 > [!IMPORTANT]
 > 🧱 Myrissa is not a scripting runtime that interprets source at execution time. It is a native compiler pipeline that turns source into machine code.
@@ -58,8 +58,9 @@ The language keeps a Pascal/Oberon-style structure, but the toolchain is intenti
 | Feature | What It Means |
 |---------|---------------|
 | **🧰 Zero external dependencies** | The full compiler pipeline runs in one invocation. No build system setup, no toolchain installation, and no PATH configuration. |
-| **⚡ Native Win64 output** | Myrissa emits x86_64 machine code directly. There is no interpreter, VM, or bytecode layer. |
-| **🎯 Multiple output targets** | Compile the same source to an EXE, DLL, static library, in-memory executable, or reusable unit module. |
+| **⚡ Native x64 output** | Myrissa emits x86_64 machine code directly. There is no interpreter, VM, or bytecode layer. |
+| **🌍 Cross-platform targets** | Build for `win64` or `linux64` from the same source via the `@target` directive. PE output for Windows, ELF for Linux -- both cross-compiled from a single Windows host with no external toolchain. |
+| **🎯 Multiple output kinds** | Compile the same source to an executable, dynamic library, static library, or reusable unit module. |
 | **🐞 Built-in debugger** | Debug Adapter Protocol (DAP) support provides breakpoints, stepping, call stacks, and variable inspection. |
 | **🧠 Language Server Protocol** | Real-time diagnostics, completion, hover information, go-to-definition, references, and document symbols for editor integration. |
 | **🌉 CImporter** | Parse C headers and generate Myrissa bindings for C libraries such as Win32 APIs, raylib, SDL, and custom native DLLs. |
@@ -87,21 +88,23 @@ Source (.myr)
 |  x64 Codegen (register alloc, encoding)   |
 |              |                            |
 |              v                            |
-|  PE Linker (sections, imports, exports)   |
+|  PE / ELF Linker (sections, imports,      |
+|                   exports, relocations)   |
 +-------------------------------------------+
     |
     v
-Output: .exe / .dll / .lib / memory
+Output: .exe / .dll / .lib (win64)
+        elf / .so / .a    (linux64)
 ```
 
-The compiler is built as a layered pipeline. Each stage has a clean responsibility, and the same front end, IR, optimizer, and code generator serve every output target. The final output writer determines whether the result becomes an executable, DLL, library, memory image, or unit module.
+The compiler is built as a layered pipeline. Each stage has a clean responsibility, and the same front end, IR, optimizer, and code generator serve every output target and platform. The final output writer determines whether the result becomes a PE or ELF executable, dynamic library, static library, or unit module.
 
 
 ### 🧩 Toolchain Map
 
 | Component | Description |
 |-----------|-------------|
-| **Compiler** | Lexing, parsing, semantic analysis, IR generation, optimization, x64 code generation, and PE linking |
+| **Compiler** | Lexing, parsing, semantic analysis, IR generation, optimization, x64 code generation, and PE/ELF linking |
 | **Debugger** | DAP protocol, breakpoints, stepping, variable inspection, call stacks, and source mapping |
 | **🌉 CImporter** | C header parser and Myrissa binding generator for foreign function interfaces |
 | **LSP Server** | Language Server Protocol support for diagnostics, completion, hover, go-to-definition, references, and document symbols |
@@ -111,10 +114,10 @@ The compiler is built as a layered pipeline. Each stage has a clean responsibili
 
 ### 🎯 Who Is This For?
 
-- **Game developers** who want scripting-language convenience while still compiling to native machine code. Myrissa's `subsystem.routine` API style, such as `gfx.clear` and `input.pressed`, is designed to pair naturally with the PIXELS 2D engine.
+- **Game developers** who want scripting-language convenience while still compiling to native machine code. Myrissa's `subsystem.routine` API style, such as `gfx.clear` and `input.pressed`, is designed to pair naturally with the PIXELS 2D engine. Import C libraries like raylib and SDL via the built-in CImporter -- one generated binding serves both Windows and Linux.
 - **Tool builders** who need an embeddable compiler. Ship `Myrissa.dll` and give your application native-code compilation at runtime.
-- **Language enthusiasts** who want to study a complete native compiler stack, from parsing and SSA IR through register allocation and PE linking.
-- **Windows developers** who want standalone binaries without shipping .NET, JVM, Python, or a pile of runtime DLLs.
+- **Language enthusiasts** who want to study a complete native compiler stack, from parsing and SSA IR through register allocation and PE/ELF linking.
+- **Windows and Linux developers** who want standalone native binaries for either platform without shipping .NET, JVM, Python, or a pile of runtime libraries.
 
 
 ### 📌 Current Status
@@ -125,17 +128,18 @@ The compiler stack is working end-to-end with support for:
 - Records with inheritance, packed layout, custom alignment, and bit fields
 - Objects with methods, `self`/`parent`, and create/destroy lifecycle management
 - Choices, sets, overlays, routine types, and variadic arguments
-- Control flow: `if`, `while`, `for`, `repeat`, `match`, `leave`, and `skip`
+- Control flow: `if`, `while`, `for`, `repeat`, and `match`
 - Exception handling with `guard`, `except`, `finally`, `throw`, and `throwcode`
-- External function declarations and runtime DLL loading
+- External function declarations with per-target library resolution
 - Module imports, module qualification, public/private visibility, and lifecycle hooks
 - Conditional compilation with `@define`, `@ifdef`, `@ifndef`, `@elseif`, `@else`, and `@endif`
 - Built-in unit testing with assertion helpers and test runner injection
 - SSA optimization passes, including Mem2Reg, constant folding, and dead code elimination
-- Win64 ABI calling conventions, including C-style linkage and `cpplink`
-- PE generation with `.text`, `.rdata`, `.data`, `.idata`, `.edata`, `.pdata`, and `.reloc` sections
+- Cross-platform targets: `win64` and `linux64` via the `@target` directive, cross-compiled from a single Windows host
+- Win64 and SysV ABI calling conventions, including C-style linkage and `cpplink`
+- PE generation with `.text`, `.rdata`, `.data`, `.idata`, `.edata`, `.pdata`, and `.reloc` sections; ELF generation for Linux executables, shared objects, and static libraries
 - DAP debugger, LSP server, and CImporter tooling
-- 70+ test cases covering language and toolchain behavior
+- 130+ test cases covering language and toolchain behavior on both targets
 
 
 ### 💻 System Requirements
@@ -143,6 +147,7 @@ The compiler stack is working end-to-end with support for:
 | Area | Requirement |
 |------|-------------|
 | **Operating system** | Windows 10/11 x64 |
+| **Compilation targets** | Windows x64 (PE) and Linux x64 (ELF), both cross-compiled from the Windows host |
 | **Runtime dependencies** | None |
 | **External toolchain** | None |
 | **Building from source** | Delphi 12.x or higher |
@@ -183,7 +188,6 @@ A Myrissa project is just source files plus the `myrc` compiler. There is no ext
 | 🚀 `module exe` | Native executable entry point |
 | 🧩 `module dll` | Dynamic library with exported routines |
 | 🧱 `module lib` | Static library output |
-| ⚡ `module mem` | Native code compiled and executed in memory |
 
 > [!TIP]
 > 🧠 Think of the first line of every file as the build contract. `module exe hello;` says what the file produces and what the module is called.
@@ -213,22 +217,21 @@ Expected output:
 Hello, Myrissa!
 ```
 
-The command compiles `hello.myr` to a native Win64 executable and runs it.
+The command compiles `hello.myr` to a native executable and runs it. The default target is `win64`; add `@target linux64;` to the source to cross-compile a native Linux binary from the same Windows host.
 
 > [!TIP]
-> Every source file starts with a `module` declaration. The declaration defines the module kind (`exe`, `dll`, `lib`, `unit`, or `mem`) and the module name.
+> Every source file starts with a `module` declaration. The declaration defines the module kind (`exe`, `dll`, `lib`, or `unit`) and the module name.
 
 
 ### 🏗️ Build Modes
 
 Myrissa can produce several target types. The output type is determined by the `module` declaration in the source file:
 
-| Module Declaration | Output | Description |
-|-------------------|--------|-------------|
-| `module exe name` | `name.exe` | Native Win64 executable |
-| `module dll name` | `name.dll` | Dynamic link library with exported routines |
-| `module lib name` | `name.lib` | Standard Win64 static library, linkable by Myrissa or other compilers |
-| `module mem name` | (in memory) | Compile to memory and execute directly |
+| Module Declaration | Output (win64 / linux64) | Description |
+|-------------------|--------------------------|-------------|
+| `module exe name` | `name.exe` / `name` | Native executable |
+| `module dll name` | `name.dll` / `name.so` | Dynamic library with exported routines |
+| `module lib name` | `name.lib` / `name.a` | Static library, linkable by Myrissa or other compilers |
 | `module unit name` | (none) | Reusable module compiled inline into the importing module |
 
 Common CLI patterns:
@@ -243,7 +246,7 @@ Common CLI patterns:
 
 #### EXE: Standalone Executable
 
-The default mode produces a native Win64 PE executable with no runtime dependencies:
+The default mode produces a native executable with no runtime dependencies -- a PE executable on `win64`, an ELF executable on `linux64`:
 
 ```
 module exe myapp;
@@ -271,7 +274,7 @@ end.
 
 #### Static Library
 
-Use `module lib` to produce a standard Win64 static library that can be linked by Myrissa or any other compiler that supports Win64 `.lib` files:
+Use `module lib` to produce a static library (`.lib` on win64, `.a` on linux64) that can be linked by Myrissa or any other compiler that supports the target's static library format:
 
 ```
 module lib mathlib;
@@ -283,11 +286,6 @@ end;
 
 end.
 ```
-
-
-#### Memory: In-Memory Compilation
-
-Use `module mem` when a host application needs to compile and execute code without writing files to disk. In-memory compilation requires a host using the `Myrissa.dll` API -- it cannot be invoked from the command line. See the [API Reference](#api-reference) for details.
 
 
 #### Unit Modules
@@ -336,7 +334,7 @@ myproject/
 For larger projects, use `@libpath` to add module search directories:
 
 ```
-@libpath "libs"
+@libpath "libs";
 import mathlib;
 ```
 
@@ -687,6 +685,23 @@ routine MessageBoxA(const hwnd: pointer; const text: string;
 MessageBoxA(nil, "Hello from Myrissa!", "Greeting", 0);
 ```
 
+The value after `external` can also be an **identifier** naming a module-level string constant; the constant's value is used as the library name. This keeps the library name in one place across many external declarations:
+
+```
+public const DLL_NAME: string = "raylib";
+
+routine InitWindow(const width: int32; const height: int32;
+  const title: pointer); external DLL_NAME;
+```
+
+**Extension resolution rules** for the library name:
+
+- `.lib` / `.a` -- static import library.
+- `.dll` / `.so` / `.so.<version>` -- dynamic import.
+- **Extensionless** -- the library search paths are probed for a static library first; if found, static import. Otherwise dynamic: on linux64 the search paths are probed for `lib<n>.so.<version>`, `lib<n>.so`, then `<n>.so` (the found filename becomes the runtime dependency); if no probe hits, the target's default shared-library extension is appended.
+
+An extensionless name like `DLL_NAME = "raylib"` therefore resolves correctly on both targets from a single binding.
+
 #### 🔗 C++ Linkage and Overloading
 
 Use `cpplink` when a routine needs C++-compatible linkage with Itanium ABI name mangling. This enables routine overloading and interoperability with C++ libraries:
@@ -815,14 +830,6 @@ match ch of
     println("consonant");
 end;
 ```
-
-#### 🛑 Loop Control
-
-| Statement | Description |
-|-----------|-------------|
-| `leave` | Exit the current loop immediately |
-| `skip` | Skip to the next iteration |
-
 
 ### 📋 Records
 
@@ -1180,7 +1187,7 @@ With exception catching:
 ```
 guard
   println("before throw");
-  throw 42;
+  throw(42);
   println("this never runs");
 except
   println("caught exception");
@@ -1194,7 +1201,7 @@ println("continues after guard");
 | `guard` | Begins a protected block |
 | `except` | Handles exceptions from the guard block |
 | `finally` | Cleanup code that always runs (with or without exception) |
-| `throw expr` | Raise an exception |
+| `throw(expr)` | Raise an exception |
 | `throwcode(code, msg)` | Raise an exception with a numeric code and message |
 | `exccode()` | Get the exception code (inside `except` block) |
 | `excmsg()` | Get the exception message (inside `except` block) |
@@ -1216,41 +1223,6 @@ Intrinsics are built-in operations recognized directly by the compiler:
 | `paramstr(n)` | Get command-line argument by index |
 | `print(...)` | Print values without newline |
 | `println(...)` | Print values with newline |
-
-
-### 📦 DLL Loading
-
-Myrissa provides two mechanisms for loading DLLs at runtime.
-
-**Resource-based loading** loads DLLs that are embedded as resources inside the PE:
-
-```
-regdll(w"mylib.dll", w"MYLIB_RES");
-loaddlls();
-```
-
-| Operation | Description |
-|-----------|-------------|
-| `regdll(dll, resource)` | Register an embedded DLL resource for loading |
-| `loaddlls()` | Load all registered DLL resources into memory |
-
-**Filesystem loading** loads DLLs from disk at runtime:
-
-```
-var lib: pointer;
-var proc: routine(const msg: string);
-
-lib := loadlib("mylib.dll");
-proc := getproc(lib, "MyFunction");
-proc("Hello from loaded DLL");
-freelib(lib);
-```
-
-| Operation | Description |
-|-----------|-------------|
-| `loadlib(path)` | Load a DLL from the filesystem, returns a handle |
-| `getproc(lib, name)` | Get a function pointer from a loaded DLL |
-| `freelib(lib)` | Unload a DLL |
 
 
 ### 🧱 Modules
@@ -1276,7 +1248,6 @@ end.
 | `dll` | Dynamic link library | `.dll` |
 | `lib` | Static library | `.lib` |
 | `unit` | Reusable module (compiled inline into importer) | (none) |
-| `mem` | In-memory compilation | (none) |
 
 #### 📥 Imports and Module Qualification
 
@@ -1333,42 +1304,79 @@ end.
 
 ### 🎛️ Directives
 
-Directives are compile-time instructions prefixed with `@`. They do not require trailing semicolons.
+Directives are compile-time instructions prefixed with `@`. Every directive is terminated by `;`, with one exception: the seven conditional-compilation directives (`@define`, `@undef`, `@ifdef`, `@ifndef`, `@elseif`, `@else`, `@endif`) take no terminator. Enumerated values (like `console` or `full`) are written as bare identifiers; quoted strings are reserved for paths and free text.
 
 #### 📄 Module Directives
 
 | Directive | Description |
 |-----------|-------------|
-| `@exeicon "path"` | Set the application icon (EXE only) |
-| `@resfile "path"` | Link a compiled resource file (.res) |
-| `@outputpath "path"` | Set the output directory |
-| `@copydll "path"` | Copy a DLL to the output directory during build |
-| `@linklibrary "path"` | Link against a library |
-| `@libpath "path"` | Add a library/module search path |
-| `@subsystem console\|gui` | Set the application subsystem (default: `console`) |
-| `@optimize level` | Set optimization: `debug`, `releasesafe`, `releasefast`, `releasesmall` |
-| `@unittestmode "on"\|"off"` | Enable/disable test block compilation |
+| `@exeicon "path";` | Set the application icon (Windows EXE only) |
+| `@resfile "path";` | Link a compiled resource file (.res) |
+| `@outputpath "path";` | Set the output directory |
+| `@copydll "path";` | Copy a DLL/shared library to the output directory during build |
+| `@libpath "path";` | Add a library/module search path |
+| `@subsystem <mode>;` | Set the application subsystem to `console` (default) or `gui`. Windows-only: on linux64 it produces a warning and is ignored |
+| `@target <platform>;` | Set the compilation target to `win64` (default) or `linux64`. Must appear in the root module |
+| `@optimize <level>;` | Set the optimization level: `debug`, `none`, `basic`, or `full` |
+| `@unittestmode <state>;` | Enable (`on`) or disable (`off`) test block compilation |
 
 #### 🏷️ Version Information Directives
 
 | Directive | Description |
 |-----------|-------------|
-| `@addverinfo "on"\|"off"` | Enable version information embedding |
-| `@vimajor number` | Major version number |
-| `@viminor number` | Minor version number |
-| `@vipatch number` | Patch version number |
-| `@viproductname "name"` | Product name |
-| `@videscription "text"` | File description |
-| `@vifilename "name"` | Original filename |
-| `@vicompanyname "name"` | Company name |
-| `@vicopyright "text"` | Copyright string |
+| `@addverinfo <state>;` | Enable (`on`) or disable (`off`) version information embedding |
+| `@vimajor number;` | Major version number |
+| `@viminor number;` | Minor version number |
+| `@vipatch number;` | Patch version number |
+| `@viproductname "name";` | Product name |
+| `@videscription "text";` | File description |
+| `@vifilename "name";` | Original filename |
+| `@vicompanyname "name";` | Company name |
+| `@vicopyright "text";` | Copyright string |
 
 #### 🧾 Statement Directives
 
 | Directive | Description |
 |-----------|-------------|
-| `@breakpoint` | Insert a debugger breakpoint |
-| `@message hint\|warn\|error\|fatal "text"` | Emit a compile-time diagnostic |
+| `@breakpoint;` | Insert a debugger breakpoint (takes no value) |
+| `@message <severity> "text";` | Emit a compile-time diagnostic at severity `hint`, `warn`, `error`, or `fatal` |
+
+#### 📦 Using Vendor Library Bindings
+
+Generated vendor bindings are unit modules that declare the library's routines with `external DLL_NAME;` against a single `public const DLL_NAME: string = "...";`, and carry a target-conditional `@copydll` block in their own header:
+
+```
+module unit RayLib;
+
+@ifdef TARGET_WIN64
+  @copydll "res/libs/vendor/raylib/win64/raylib.dll";
+@elseif TARGET_LINUX64
+  @copydll "res/libs/vendor/raylib/linux64/libraylib.so.550";
+@else
+  @message error "RayLib: unsupported target";
+@endif
+
+public const
+  DLL_NAME: string = "raylib";
+```
+
+A consumer only adds the vendor folder to the search path and imports the binding module:
+
+```
+module exe demo;
+
+@libpath "res/libs/vendor/raylib";
+@libpath "res/libs/vendor/raylib/linux64";   // .so probing on linux64
+
+import RayLib;
+
+begin
+  RayLib.InitWindow(800, 600, utf8(w"Demo"));
+  // ...
+end.
+```
+
+The extensionless `DLL_NAME` resolves per target (see External Routines), the binding's target-conditional `@copydll` places the right shared library next to the output, and on linux64 the found `.so` filename becomes the runtime dependency, loaded from the executable's own directory.
 
 
 ### 🔀 Conditional Compilation
@@ -1382,10 +1390,14 @@ Conditional compilation lets a source file include or exclude code based on defi
   println("Debug: entering main loop");
 @endif
 
-@ifdef WIN64
+@ifdef TARGET_WIN64
   println("Running on 64-bit Windows");
+@elseif TARGET_LINUX64
+  println("Running on 64-bit Linux");
 @endif
 ```
+
+The conditional directives take no terminating semicolon. They also work inside imported unit modules, evaluated with the root module's defines (e.g. `TARGET_WIN64`), so a single unit can carry target-specific code for all importers.
 
 | Directive | Description |
 |-----------|-------------|
@@ -1402,20 +1414,25 @@ Conditional compilation lets a source file include or exclude code based on defi
 | Symbol | Defined When |
 |--------|-------------|
 | `MYRISSA` | Always |
-| `WINDOWS`, `MSWINDOWS`, `WIN64`, `TARGET_WIN64`, `CPUX64` | Always (Win64-only target) |
-| `BUILD_EXE`, `BUILD_DLL`, `BUILD_LIB`, `BUILD_UNIT`, `BUILD_MEM` | Based on module kind |
-| `CONSOLE_APP`, `GUI_APP` | Based on `@subsystem` directive |
-| `UNITTEST` | When `@unittestmode "on"` is active |
+| `CPUX64` | Always (x64-only architecture) |
+| `APPTYPE_CONSOLE` | Always |
+| `WINDOWS`, `MSWINDOWS`, `WIN64`, `TARGET_WIN64` | Target is `win64` |
+| `LINUX`, `TARGET_LINUX64` | Target is `linux64` |
+| `DEBUG` | Optimization level is `none` |
+| `RELEASE` | Optimization level is not `none` |
+| `BUILD_EXE` | Module kind is `exe` (or unknown) |
+| `BUILD_DLL` | Module kind is `dll` |
+| `BUILD_LIB` | Module kind is `lib` |
 
 
 ### 🧪 Unit Testing
 
-Test blocks appear after the module's `end.` marker and are compiled only when `@unittestmode "on"` is active. In test mode, the compiler replaces the normal entry point with the test runner.
+Test blocks appear after the module's `end.` marker and are compiled only when `@unittestmode on;` is active. In test mode, the compiler replaces the normal entry point with the test runner.
 
 ```
 module exe mathlib;
 
-@unittestmode "on"
+@unittestmode on;
 
 routine add(const a: int32; const b: int32): int32;
 begin
@@ -1587,20 +1604,20 @@ assertfalse assertfail assertnil assertnotnil asserttrue
 begin      choices    const      cpplink    create     destroy
 div        do         downto     else       end        except
 exccode    excmsg     external   false      finalize   finally
-for        freelib    freemem    getmem     getproc    guard
-if         import     in         initialize is         leave      len
-loaddlls   loadlib    match      method     mod        module
+for        freemem    getmem     guard
+if         import     in         initialize is         len
+match      method     mod        module
 nil        not        object     of         or         overlay
 packed     paramcount paramstr   parent     pointer    print
-println    public     record     regdll     repeat     resizemem
+println    public     record     repeat     resizemem
 return     routine    self       set        setlength  shl
-shr        size       skip       test       then       throw
+shr        size       test       then       throw
 throwcode  to         true       type       until      utf8
 var        varargs    while      xor
 ```
 
 > [!NOTE]
-> The identifiers `exe`, `dll`, `lib`, `unit`, and `mem` are contextual. They have special meaning only in the `ModuleKind` position and may be used as ordinary identifiers elsewhere. Unit modules are `.myr` source files that are compiled inline into the importing module rather than producing separate output.
+> The identifiers `exe`, `dll`, `lib`, and `unit` are contextual. They have special meaning only in the `ModuleKind` position and may be used as ordinary identifiers elsewhere. Unit modules are `.myr` source files that are compiled inline into the importing module rather than producing separate output.
 
 
 ### 🧱 3. Built-in Types
@@ -1680,10 +1697,10 @@ Module        = "module" ModuleKind ident ";" [ Directives ] [ ImportClause ]
                 [ "begin" StatementSeq ] "end" "."
                 { TestBlock } .
 
-ModuleKind    = "exe" | "dll" | "lib" | "unit" | "mem" .
+ModuleKind    = "exe" | "dll" | "lib" | "unit" .
 
 Directives    = { Directive } .
-Directive     = "@" ident [ DirectiveValue ] .
+Directive     = "@" ident [ DirectiveValue ] ";" .
 DirectiveValue = cstring | integer | float_literal | ident .
 
 ImportClause  = "import" ident { "," ident } ";" .
@@ -1709,8 +1726,14 @@ TestBlock     = "test" cstring [ "var" { VarDecl } ]
 > they are distinguished as `A.Foo` and `B.Foo` -- there is no ambiguity.
 
 > [!NOTE]
+> **Directive termination.** Every directive is terminated by `;` -- with one
+> exception: the seven conditional-compilation directives (Section 7:
+> `@define`, `@undef`, `@ifdef`, `@ifndef`, `@elseif`, `@else`, `@endif`)
+> take **no** terminator.
+
+> [!NOTE]
 > **Test blocks.** Test blocks appear after `end.` and are only compiled when
-> `@unittestmode "on"` is active. Each test block has a string name, optional local
+> `@unittestmode on;` is active. Each test block has a string name, optional local
 > variables, and a body. When unittest mode is on, the compiler replaces the normal
 > entry point with the test runner. Test blocks have access to all module declarations.
 
@@ -1732,53 +1755,62 @@ EndifDir    = "@endif" .
 
 #### 📜 Known Directives
 
+All directives below are terminated by `;`. Bare identifiers are the canonical
+form for enumerated values; quoted strings are reserved for paths and free text.
+
 **Module-level directives** (appear after `module` header, before or among declarations):
 
-- `@exeicon "path"` -- Sets the application icon (Windows EXE modules only).
-- `@resfile "path"` -- Specifies a compiled resource file (.res) to link into the output.
-- `@outputpath "path"` -- Sets the output directory for the compiled binary.
-- `@copydll "path"` -- Copies a DLL to the output directory during build.
-- `@linklibrary "path"` -- Specifies a library to link against.
-- `@libpath "path"` -- Adds a directory to the library and module search path.
-- `@subsystem type` -- Sets the application subsystem. Valid values: `console` (default), `gui`.
-- `@optimize level` -- Sets optimization level. Valid values: `debug`, `releasesafe`, `releasefast`, `releasesmall`.
-- `@unittestmode "on"|"off"` -- Enables or disables test block compilation and test runner entry point.
+- `@exeicon "path";` -- Sets the application icon (Windows EXE modules only).
+- `@resfile "path";` -- Specifies a compiled resource file (.res) to link into the output.
+- `@outputpath "path";` -- Sets the output directory for the compiled binary.
+- `@copydll "path";` -- Copies a DLL/shared library to the output directory during build.
+- `@libpath "path";` -- Adds a directory to the library and module search path.
+- `@subsystem console|gui;` -- Sets the application subsystem (bare identifier). Default: `console`. Windows-only: on the linux64 target it produces a warning and is ignored.
+- `@target win64|linux64;` -- Sets the compilation target (bare identifier). Default: `win64`. Overrides the API SetTarget for the current compile only; must appear in the root module.
+- `@optimize debug|none|basic|full;` -- Sets optimization level (bare identifier).
+- `@unittestmode on|off;` -- Enables or disables test block compilation and test runner entry point (bare identifier).
 
 **Version information directives** (for embedding in the PE executable):
 
-- `@addverinfo "on"|"off"` -- Enables or disables version information embedding.
-- `@vimajor number` -- Major version number.
-- `@viminor number` -- Minor version number.
-- `@vipatch number` -- Patch version number.
-- `@viproductname "name"` -- Product name.
-- `@videscription "text"` -- File description.
-- `@vifilename "name"` -- Original filename.
-- `@vicompanyname "name"` -- Company name.
-- `@vicopyright "text"` -- Copyright string.
+- `@addverinfo on|off;` -- Enables or disables version information embedding (bare identifier).
+- `@vimajor number;` -- Major version number.
+- `@viminor number;` -- Minor version number.
+- `@vipatch number;` -- Patch version number.
+- `@viproductname "name";` -- Product name.
+- `@videscription "text";` -- File description.
+- `@vifilename "name";` -- Original filename.
+- `@vicompanyname "name";` -- Company name.
+- `@vicopyright "text";` -- Copyright string.
 
 **Statement-level directives:**
 
-- `@breakpoint` -- Marks a debugger breakpoint location.
-- `@message hint|warn|error|fatal "text"` -- Emits a compiler diagnostic at parse time.
+- `@breakpoint;` -- Marks a debugger breakpoint location. Takes no value.
+- `@message hint|warn|error|fatal "text";` -- Emits a compiler diagnostic at parse time (bare-identifier severity followed by a quoted string).
+
+> [!NOTE]
+> **Conditionals in imported units.** The conditional-compilation directives
+> (`@define`, `@undef`, `@ifdef`, `@ifndef`, `@elseif`, `@else`, `@endif`)
+> take no terminator and also work inside imported unit modules, evaluated
+> with the root module's defines (e.g. `TARGET_WIN64`).
 
 #### 🏁 Predefined Symbols
 
 | Symbol               | Defined when                          |
 |----------------------|---------------------------------------|
 | `MYRISSA`            | Always                                |
-| `WINDOWS`            | Always (Win64-only target)            |
-| `MSWINDOWS`          | Always (Win64-only target)            |
-| `WIN64`              | Always (Win64-only target)            |
-| `TARGET_WIN64`       | Always (Win64-only target)            |
-| `CPUX64`             | Always (x64-only target)              |
-| `BUILD_EXE`          | Module kind is `exe`                  |
+| `CPUX64`             | Always (x64-only architecture)        |
+| `APPTYPE_CONSOLE`    | Always                                |
+| `WINDOWS`            | Target is `win64`                     |
+| `MSWINDOWS`          | Target is `win64`                     |
+| `WIN64`              | Target is `win64`                     |
+| `TARGET_WIN64`       | Target is `win64`                     |
+| `LINUX`              | Target is `linux64`                   |
+| `TARGET_LINUX64`     | Target is `linux64`                   |
+| `DEBUG`              | Optimization level is `none`          |
+| `RELEASE`            | Optimization level is not `none`      |
+| `BUILD_EXE`          | Module kind is `exe` (or unknown)     |
 | `BUILD_DLL`          | Module kind is `dll`                  |
 | `BUILD_LIB`          | Module kind is `lib`                  |
-| `BUILD_UNIT`         | Module kind is `unit`                 |
-| `BUILD_MEM`          | Module kind is `mem`                  |
-| `CONSOLE_APP`        | Subsystem is `console` (default)      |
-| `GUI_APP`            | Subsystem is `gui`                    |
-| `UNITTEST`           | `@unittestmode on` is active          |
 
 
 ### 📦 8. Declarations
@@ -1820,6 +1852,32 @@ RoutineBody     = [ "type" { TypeDecl } ]
 
 - **Default linkage**: Routines use C calling convention and naming by default.
 - **C++ linkage (`cpplink`)**: Enables Itanium ABI name mangling for C++ interoperability and overloading.
+
+#### 🔗 External Clause Semantics
+
+The optional value after `external` names the library to import from:
+
+- **String literal** -- the library name/path directly: `external "raylib.dll";`
+- **Identifier** -- names a module-level string constant declared in the
+  enclosing module; the constant's value is used as the library name.
+  A compile error is raised if no such string constant exists.
+
+```
+public const DLL_NAME: string = "raylib";
+
+routine InitWindow(const width: int32; const height: int32;
+  const title: pointer); external DLL_NAME;
+```
+
+**Extension resolution rules** for the library name:
+
+- `.lib` / `.a` -- static import library.
+- `.dll` / `.so` / `.so.<version>` -- dynamic import.
+- **Extensionless** -- the library search paths are probed for a static
+  library first; if found, static import. Otherwise dynamic: on linux64 the
+  search paths are probed for `lib<name>.so.<version>`, `lib<name>.so`, then
+  `<name>.so` (the found filename becomes the runtime dependency); if no
+  probe hits, the target's default shared-library extension is appended.
 
 
 ### 🏷️ 10. Type Definitions
@@ -1879,7 +1937,7 @@ Statement       = [ Assignment | CallStmt | IfStmt | WhileStmt | ForStmt
                 | RepeatStmt | MatchStmt | ReturnStmt | GuardStmt | RaiseStmt
                 | CreateStmt | DestroyStmt
                 | GetMemStmt | FreeMemStmt | ResizeMemStmt | SetLengthStmt
-                | PrintStmt | RegDllStmt | FreeLibStmt
+                | PrintStmt
                 | AssertStmt | Directive | ";" ] .
 
 Assignment      = Designator ( ":=" | "+=" | "-=" | "*=" | "/=" ) Expression [ ";" ] .
@@ -1915,15 +1973,13 @@ FreeMemStmt     = "freemem" "(" Expression ")" [ ";" ] .
 ResizeMemStmt   = "resizemem" "(" Expression "," Expression ")" [ ";" ] .
 SetLengthStmt   = "setlength" "(" Expression "," Expression ")" [ ";" ] .
 PrintStmt       = ( "print" | "println" ) "(" [ ArgList ] ")" [ ";" ] .
-RegDllStmt      = "regdll" "(" Expression "," Expression ")" [ ";" ] .
-FreeLibStmt     = "freelib" "(" Expression ")" [ ";" ] .
 ```
 
 #### 🧪 Assert Statements (Unit Testing)
 
 Assert statements are available in all code but are primarily used inside test blocks.
 All assertions continue after failure -- failures accumulate and are reported per test.
-The compiler handles all test infrastructure automatically. When `@unittestmode "on"` is active, test blocks are compiled, registered, and executed by the built-in test runner.
+The compiler handles all test infrastructure automatically. When `@unittestmode on;` is active, test blocks are compiled, registered, and executed by the built-in test runner.
 The compiler injects source file and line number automatically.
 
 ```
@@ -1989,8 +2045,7 @@ TypeCast        = TypeExpr "(" Expression ")" .
 
 ```
 Intrinsic       = LenExpr | SizeExpr | Utf8Expr | ParamCountExpr | ParamStrExpr
-                | ExcCodeExpr | ExcMsgExpr
-                | LoadDllsExpr | LoadLibExpr | GetProcExpr .
+                | ExcCodeExpr | ExcMsgExpr .
 
 LenExpr         = "len" "(" Expression ")" .
 SizeExpr        = "size" "(" ( TypeExpr | Expression ) ")" .
@@ -1999,9 +2054,6 @@ ParamCountExpr  = "paramcount" "(" ")" .
 ParamStrExpr    = "paramstr" "(" Expression ")" .
 ExcCodeExpr     = "exccode" "(" ")" .
 ExcMsgExpr      = "excmsg" "(" ")" .
-LoadDllsExpr    = "loaddlls" "(" ")" .
-LoadLibExpr     = "loadlib" "(" Expression ")" .
-GetProcExpr     = "getproc" "(" Expression "," Expression ")" .
 ```
 
 > [!NOTE]
@@ -2009,8 +2061,6 @@ GetProcExpr     = "getproc" "(" Expression "," Expression ")" .
 > `size` returns the byte size of a type or expression. `utf8` converts a wide
 > string to a UTF-8 managed string. Memory management (`create`/`destroy`/`getmem`/
 > `freemem`/`resizemem`/`setlength`) is defined in Statements (Section 11).
-> DLL loader: `regdll`/`freelib` are statements (Section 11);
-> `loaddlls`/`loadlib`/`getproc` are expression intrinsics returning values.
 
 
 ### 🧺 14. Variadic Arguments
@@ -2035,7 +2085,7 @@ VarArgsAccess   = "varargs" "." "next" "(" TypeExpr ")"
 ### 🧪 15. Unit Testing
 
 Test blocks appear after the module's `end.` and are only compiled when the
-`@unittestmode "on"` directive is active. When `@unittestmode "on"` is active:
+`@unittestmode on;` directive is active. When `@unittestmode on;` is active:
 
 1. The compiler parses test blocks after `end.`
 2. Each test block is compiled as a parameterless routine
@@ -2051,14 +2101,14 @@ TestBlock     = "test" cstring [ "var" { VarDecl } ]
 ```
 module exe mathlib;
 
-@unittestmode on
+@unittestmode on;
 
-routine add(const a, b: int32): int32;
+routine add(const a: int32; const b: int32): int32;
 begin
   return a + b;
 end;
 
-routine mul(const a, b: int32): int32;
+routine mul(const a: int32; const b: int32): int32;
 begin
   return a * b;
 end;
@@ -2087,7 +2137,7 @@ begin
   asserteq(-8, add(-5, -3));
 end;
 
-test "mul returns correct product";
+test "mul returns correct product"
 begin
   asserteq(20, mul(4, 5));
   asserteq(0, mul(0, 100));
@@ -2132,7 +2182,7 @@ Myrissa includes a complete native development toolchain: compiler, debugger, CI
 | Step | Tool | Result |
 |------|------|--------|
 | 1️⃣ Write source | Editor + LSP | Diagnostics, completion, hover, references |
-| 2️⃣ Build | Compiler | Native EXE, DLL, LIB, memory image, or unit module |
+| 2️⃣ Build | Compiler | Native EXE, DLL, LIB, or unit module |
 | 3️⃣ Debug | DAP debugger / REPL | Breakpoints, stepping, variables, call stack |
 | 4️⃣ Bind native code | CImporter | Myrissa declarations generated from C headers |
 | 5️⃣ Embed | `Myrissa.dll` API | Host applications can drive the compiler/tooling programmatically |
@@ -2142,7 +2192,7 @@ Myrissa includes a complete native development toolchain: compiler, debugger, CI
 
 ### ⚙️ Compiler
 
-The Myrissa compiler takes `.myr` source files and produces native Win64 output. A single compiler invocation handles lexing, parsing, semantic analysis, IR generation, SSA optimization, x64 code generation, and PE linking.
+The Myrissa compiler takes `.myr` source files and produces native output for `win64` or `linux64`, selected by the `@target` directive. A single compiler invocation handles lexing, parsing, semantic analysis, IR generation, SSA optimization, x64 code generation, and PE or ELF linking -- Linux binaries are cross-compiled from the Windows host with no external toolchain.
 
 
 #### ▶️ Basic Usage
@@ -2159,10 +2209,9 @@ myrc -s hello.myr -d               // compile and debug
 
 | Target | Module Kind | Description |
 |--------|-------------|-------------|
-| EXE | `exe` | Standalone Windows executable |
-| DLL | `dll` | Dynamic link library with exported functions |
-| Static Library | `lib` | Standard Win64 static library, linkable by Myrissa or other compilers |
-| Memory | `mem` | Compile and execute directly in memory |
+| EXE | `exe` | Standalone native executable (PE on win64, ELF on linux64) |
+| DLL | `dll` | Dynamic library with exported functions (`.dll` / `.so`) |
+| Static Library | `lib` | Static library, linkable by Myrissa or other compilers (`.lib` / `.a`) |
 | Unit Module | `unit` | Reusable module compiled inline into the importing module |
 
 
@@ -2176,7 +2225,7 @@ The compiler processes source through these stages:
 4. **IR generation**: converts the AST to intermediate representation
 5. **SSA optimization**: runs passes such as Mem2Reg, constant folding, and dead code elimination
 6. **x64 code generation**: performs instruction selection, register allocation, and encoding
-7. **PE linking**: builds valid PE64 images with sections, imports, exports, relocations, and metadata
+7. **PE/ELF linking**: builds valid PE64 or ELF64 images with sections, imports, exports, relocations, and metadata
 
 > [!NOTE]
 > The pipeline runs in-process. There is no separate linker step, no temporary object-file workflow, and no dependency on MSVC, MinGW, or another external toolchain.
@@ -2184,14 +2233,14 @@ The compiler processes source through these stages:
 
 #### 🚀 Optimization Levels
 
-Control optimization with the `@optimize` directive:
+Control optimization with the `@optimize` directive (for example, `@optimize full;`):
 
 | Level | Description |
 |-------|-------------|
 | `debug` | No optimization; full debug information |
-| `releasesafe` | Optimized output with safety checks |
-| `releasefast` | Maximum performance optimization |
-| `releasesmall` | Optimization focused on binary size |
+| `none` | No optimization (same as debug, without debug metadata) |
+| `basic` | Constant folding, copy propagation, dead code elimination |
+| `full` | All optimizations including CSE and additional backend passes |
 
 
 #### 🏷️ Version Information
@@ -2201,14 +2250,14 @@ Embed Windows version information in an EXE with version directives:
 ```
 module exe myapp;
 
-@addverinfo "on"
-@vimajor 1
-@viminor 0
-@vipatch 0
-@viproductname "My Application"
-@videscription "A sample Myrissa application"
-@vicompanyname "My Company"
-@vicopyright "Copyright 2026"
+@addverinfo on;
+@vimajor 1;
+@viminor 0;
+@vipatch 0;
+@viproductname "My Application";
+@videscription "A sample Myrissa application";
+@vicompanyname "My Company";
+@vicopyright "Copyright 2026";
 ```
 
 
@@ -2234,7 +2283,7 @@ Add a breakpoint directly in source with the `@breakpoint` directive:
 
 ```
 var x: int32 = compute_value();
-@breakpoint                      // execution pauses here
+@breakpoint;                     // execution pauses here
 println("x = %d", x);           // inspect x before this runs
 ```
 
@@ -2377,7 +2426,7 @@ The LSP is accessed through the `Myrissa.dll` API (`Myr_LSP_*` functions) or lau
 
 ### ✅ Toolchain Best Practices
 
-- 🚀 Use `releasefast` only after the debug build behaves correctly
+- 🚀 Use `@optimize full;` only after the debug build behaves correctly
 - 🧪 Keep small sample programs for imported C libraries
 - 🧭 Prefer explicit output paths in repeatable scripts
 - 🧠 Keep LSP and compiler versions from the same Myrissa release
@@ -2526,26 +2575,11 @@ Myr_Compiler_Destroy(compiler);
 
 #### 🎯 Output Modes
 
-| Output | Description |
-|--------|-------------|
-| `.exe` | Native Win64 executable |
-| `.dll` | Dynamic link library |
-| `.lib` | Static library, COFF format |
-| Memory | Compile to memory and execute via callback |
-
-
-#### ⚡ In-Memory Compilation
-
-For in-memory execution, compile to memory and invoke exported symbols:
-
-```c
-void* compiler = Myr_Compiler_Create();
-Myr_Compiler_LoadString(compiler, source, "mem_module.myr");
-uint32_t exitCode = 0;
-Myr_Compiler_Compile(compiler, 1, &exitCode);
-// Use Myr_Compiler_GetSymbol / Myr_Compiler_Invoke for exported symbols
-Myr_Compiler_Destroy(compiler);
-```
+| Output (win64 / linux64) | Description |
+|--------------------------|-------------|
+| `.exe` / no extension | Native executable (PE on win64, ELF on linux64) |
+| `.dll` / `.so` | Dynamic library |
+| `.lib` / `.a` | Static library |
 
 
 ### 🐞 Debugger API
@@ -2593,6 +2627,23 @@ MyrBool result = Myr_CImporter_Process(importer);
 
 Myr_CImporter_Destroy(importer);
 ```
+
+
+#### 🔗 Binding Mode
+
+`Myr_CImporter_SetBindingMode()` accepts `MYR_BIND_DYNAMIC` (0), the only binding mode currently supported. The parameter is retained for ABI stability; all values map to dynamic binding.
+
+
+#### 📦 Cross-Platform DLL Copying
+
+`Myr_CImporter_AddCopyDll()` registers a shared library to be copied alongside built programs, per target. The generated binding emits a target-conditional `@copydll` block in its module header:
+
+```c
+Myr_CImporter_AddCopyDll(importer, MYR_TARGET_WIN64,   "win64/raylib.dll");
+Myr_CImporter_AddCopyDll(importer, MYR_TARGET_LINUX64, "linux64/libraylib.so.550");
+```
+
+Targets: `MYR_TARGET_WIN64` (0), `MYR_TARGET_LINUX64` (1).
 
 
 ### 🧠 LSP API
@@ -2721,6 +2772,7 @@ Practical recipes for common Myrissa tasks. Each recipe is intentionally small, 
 | 🔧 Reuse logic | Routines and var parameters |
 | 📋 Model data | Records, arrays, choices, sets, overlays, and objects |
 | 📍 Work close to memory | Pointers, allocation, DLLs, and Windows API calls |
+| 🎮 Use a C library | Vendor bindings (raylib, SDL3) |
 | 🛡️ Recover from failures | Exceptions and guards |
 | 🧪 Verify behavior | Unit tests and assertions |
 
@@ -3267,30 +3319,70 @@ end.
 ```
 
 
-### 📦 How Do I Load a DLL at Runtime?
+### 🎮 How Do I Use a C Library (Vendor Bindings)?
+
+Vendor libraries ship as pre-generated Myrissa bindings. Each library lives under `res/libs/vendor/<lib>/` with this layout:
+
+```text
+res/libs/vendor/raylib/
+  RayLib.myr        <- generated binding module
+  RayLib.json       <- importer config used to generate it
+  include/          <- original C headers
+  win64/            <- raylib.dll
+  linux64/          <- libraylib.so.550
+```
+
+The generated binding module handles cross-platform DLL deployment itself. Its header selects the right shared library per target:
 
 ```
-module exe dllops;
+module unit RayLib;
 
-var
-  h: pointer;
-  proc: pointer;
+@ifdef TARGET_WIN64
+  @copydll "res/libs/vendor/raylib/win64/raylib.dll";
+@elseif TARGET_LINUX64
+  @copydll "res/libs/vendor/raylib/linux64/libraylib.so.550";
+@else
+  @message error "RayLib: unsupported target";
+@endif
+
+public const
+  DLL_NAME: string = "raylib";
+```
+
+Every routine in the binding is declared as `external DLL_NAME;` -- one string constant names the library for the whole module.
+
+**Consumer pattern** -- your program only needs the library paths and an import:
+
+```
+module exe demo_raylib;
+
+@libpath "res/libs/vendor/raylib";
+@libpath "res/libs/vendor/raylib/linux64";
+
+import
+  RayLib;
 
 begin
-  h := loadlib("kernel32.dll");
-  if h <> nil then
-    println("loaded kernel32");
+  RayLib.InitWindow(800, 450, "Myrissa - Raylib Test");
+  RayLib.SetTargetFPS(60);
+
+  while not RayLib.WindowShouldClose() do
+    RayLib.BeginDrawing();
+      RayLib.ClearBackground(RayLib.RAYWHITE);
+      RayLib.DrawText("Hello from Myrissa!", 280, 200, 20, RayLib.DARKGREEN);
+    RayLib.EndDrawing();
   end;
 
-  proc := getproc(h, "GetTickCount64");
-  if proc <> nil then
-    println("got function pointer");
-  end;
-
-  freelib(h);
-  println("freed");
+  RayLib.CloseWindow();
 end.
 ```
+
+How it works per target:
+
+- **win64** -- the extensionless name `raylib` resolves to `raylib.dll`; `@copydll` places it next to the output executable.
+- **linux64** -- the library search paths (the second `@libpath`) are probed for `libraylib.so.550` / `libraylib.so` / `raylib.so`; the found filename becomes the executable's needed-library entry, and it loads from the executable's own directory at runtime -- the same file `@copydll` placed there.
+
+One binding, one consumer module, both targets. Bindings are generated from C headers by the CImporter (dynamic binding only) -- see the API Reference for generating your own.
 
 
 ### 🧩 How Do I Build a DLL?
@@ -3354,7 +3446,7 @@ var
 
 begin
   x := x + 1;
-  @breakpoint
+  @breakpoint;
   println("x = %d", x);   // execution pauses here so you can inspect x
 end.
 ```
@@ -3366,27 +3458,6 @@ myrc -s debug_example.myr -d
 ```
 
 The debugger supports the Debug Adapter Protocol (DAP), so VS Code and other DAP-capable editors can provide a graphical debugging experience.
-
-
-### ⚡ How Do I Compile to Memory and Run?
-
-In-memory compilation requires a host application using the `Myrissa.dll` API. The host loads source with `module mem`, compiles it, and invokes exported symbols directly:
-
-```c
-void* compiler = Myr_Compiler_Create();
-Myr_Compiler_LoadString(compiler, source, "mem_module.myr");
-uint32_t exitCode = 0;
-Myr_Compiler_Compile(compiler, 1, &exitCode);
-
-// Look up and call exported functions
-if (Myr_Compiler_HasSymbol(compiler, "my_function")) {
-    int64_t result = Myr_Compiler_Invoke(compiler, "my_function", MYR_TYPE_INT32);
-}
-
-Myr_Compiler_Destroy(compiler);
-```
-
-This is useful for game engines, tool builders, and any host that needs runtime native-code compilation without writing files to disk.
 
 
 ### 🔀 How Do I Use Conditional Compilation?
@@ -3510,7 +3581,7 @@ shutdown
 ```
 module exe tests;
 
-@unittestmode "on"
+@unittestmode on;
 
 routine add(a: int32; b: int32): int32;
 begin
@@ -3555,7 +3626,7 @@ begin
 end;
 ```
 
-When `@unittestmode "on"` is active, the compiler replaces the normal entry point with the test runner. Assertions accumulate failures and report results per test instead of aborting at the first failure.
+When `@unittestmode on;` is active, the compiler replaces the normal entry point with the test runner. Assertions accumulate failures and report results per test instead of aborting at the first failure.
 
 
 ### ⌨️ How Do I Read Command-Line Arguments?
@@ -3680,7 +3751,7 @@ If Myrissa saves you time, helps you learn, or sparks something useful:
 
 ## 📜 License
 
-Myrissa is licensed under the **Apache License, Version 2.0**. See [LICENSE](https://github.com/tinyBigGAMES/Myrissa#Apache-2.0-1-ov-file) for details.
+Myrissa is licensed under the **Apache License, Version 2.0**. See [LICENSE](https://github.com/tinyBigGAMES/Myrissa?tab=License-1-ov-file#) for details.
 
 Apache 2.0 is a permissive open source license that lets you use, modify, and distribute Myrissa freely in both open source and commercial projects. You are not required to release your own source code. Attribution is required: keep the copyright notice and license file in place.
 

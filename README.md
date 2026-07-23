@@ -8,7 +8,7 @@
 
 ## What is Myrissa?
 
-**A zero-dependency native compiler for Windows x64.** Write clean, statically-typed `.myr` source code and get standalone PE executables, DLLs, or static libraries -- no MSVC, no MinGW, no external linker, no runtime to ship.
+**A zero-dependency native compiler for Windows x64 and Linux x64.** Write clean, statically-typed `.myr` source code and get standalone executables, dynamic libraries, or static libraries for either platform -- no MSVC, no MinGW, no GCC, no external linker, no runtime to ship.
 
 ```myrissa
 module exe hello;
@@ -24,7 +24,7 @@ Compile and run:
 myrc -s hello.myr -r
 ```
 
-Myrissa compiles ahead-of-time through a complete in-process pipeline: lexer, parser, AST, semantic analysis, SSA-based IR with optimization passes, x64 register allocation and instruction encoding, and PE linking with sections, imports, exports, and relocations. The entire toolchain runs in a single invocation. There is nothing to install, configure, or depend on.
+Myrissa compiles ahead-of-time through a complete in-process pipeline: lexer, parser, AST, semantic analysis, SSA-based IR with optimization passes, x64 register allocation and instruction encoding, and PE or ELF linking with sections, imports, exports, and relocations. The entire toolchain runs in a single invocation on Windows -- the `@target win64|linux64;` directive selects the platform, and Linux binaries are cross-compiled without any Linux toolchain installed. There is nothing to install, configure, or depend on.
 
 The language takes its syntax philosophy from Pascal and Oberon: `begin..end` blocks, `:=` assignment, strong static typing, and a module system that keeps code organized. Case-sensitive, semicolon-delimited, and designed to be readable at a glance.
 
@@ -32,19 +32,20 @@ Myrissa also ships as an embeddable DLL. Host applications can compile and execu
 
 ## 🎯 Who is Myrissa For?
 
-Myrissa is for developers who want native Win64 output without fighting the toolchain:
+Myrissa is for developers who want native x64 output without fighting the toolchain:
 
-- **Game developers**: Scripting-language convenience with native compilation. Myrissa's `subsystem.routine` API style pairs naturally with the PIXELS 2D engine. Import C libraries like raylib and SDL via the built-in CImporter.
+- **Game developers**: Scripting-language convenience with native compilation. Myrissa's `subsystem.routine` API style pairs naturally with the PIXELS 2D engine. Import C libraries like raylib and SDL via the built-in CImporter -- one generated binding serves both Windows and Linux.
 - **Tool builders**: Ship `Myrissa.dll` and give your application native-code compilation at runtime. The flat C-compatible API supports compiler, debugger, CImporter, LSP, and test runner subsystems. C/C++ and Delphi/Free Pascal bindings are included.
-- **Language enthusiasts**: Study a complete native compiler stack from parsing and SSA IR through register allocation and PE linking -- all in one Delphi codebase with no third-party dependencies.
-- **Windows developers**: Produce standalone Win64 binaries without shipping .NET, JVM, Python, or a pile of runtime DLLs alongside your application.
+- **Language enthusiasts**: Study a complete native compiler stack from parsing and SSA IR through register allocation and PE/ELF linking -- all in one Delphi codebase with no third-party dependencies.
+- **Windows and Linux developers**: Produce standalone native binaries for either platform without shipping .NET, JVM, Python, or a pile of runtime libraries alongside your application.
 
 
 ## ✨ Key Features
 
 - **Zero dependencies**: The full compiler pipeline runs in one invocation. No build system, no toolchain installation, no PATH configuration. One tool produces standalone native binaries.
 - **Native x64 output**: Ahead-of-time compiled to x86-64 machine code. No interpreter, no VM, no bytecode layer. The output runs bare metal.
-- **Multiple output targets**: Compile the same source to EXE, DLL, static library (standard Win64 `.lib`, linkable by any compiler), or in-memory executable. The `module` declaration drives the output.
+- **Cross-platform targets**: Build for `win64` or `linux64` from the same source via the `@target` directive. PE output for Windows, ELF for Linux -- both cross-compiled from a single Windows host with no external toolchain.
+- **Multiple output kinds**: Compile the same source to executable, dynamic library (`.dll`/`.so`), or static library (`.lib`/`.a`, linkable by any compiler). The `module` declaration drives the output.
 - **Pascal/Oberon syntax**: Case-sensitive, `begin..end` blocks, `:=` assignment, strong static typing. Records with inheritance, packed layout, and bit fields. Objects with methods, `self`/`parent`, and create/destroy lifecycle.
 - **Routine overloading**: Use `cpplink` for Itanium ABI name mangling. Overloaded routines can be exported from and imported into `.dll` and `.lib` files.
 - **Structured exception handling**: `guard/except/finally` with `throw` and `throwcode`. Full exception context via `exccode()` and `excmsg()` intrinsics.
@@ -52,21 +53,21 @@ Myrissa is for developers who want native Win64 output without fighting the tool
 - **Variadic routines**: Define your own variadic routines with `...`. Access arguments via `varargs.count`, `varargs.next(T)`, and `varargs.copy()`.
 - **Built-in debugger**: Debug Adapter Protocol (DAP) support provides breakpoints, stepping, call stacks, and variable inspection. Works with VS Code and other DAP-capable editors. The `@breakpoint` directive marks source locations.
 - **Language Server Protocol**: Real-time diagnostics, completion, hover, go-to-definition, references, document symbols, rename, semantic tokens, and formatting. In-process or out-of-process modes.
-- **CImporter**: Parse C headers and generate Myrissa bindings for foreign function interfaces. Handles structs, unions, enums, typedefs, function declarations, preprocessor constants, and calling conventions.
+- **CImporter**: Parse C headers and generate Myrissa bindings for foreign function interfaces. Handles structs, unions, enums, typedefs, function declarations, preprocessor constants, and calling conventions. Generated bindings are cross-platform: target-conditional library selection means one binding unit serves both win64 and linux64.
 - **Embeddable API**: `Myrissa.dll` exposes a flat C-callable API for embedding the compiler, debugger, CImporter, LSP, console, utilities, menu, and test runner subsystems. Pre-built bindings at `lib/c/include/Myrissa.h` and `lib/pascal/Myrissa.pas`.
 - **Built-in unit testing**: `test "name" begin ... end;` blocks with typed assertions (`assert`, `asserteq`, `assertnil`, `assertfail`, and more). The compiler replaces the entry point with the test runner automatically.
-- **Conditional compilation**: `@define`, `@ifdef`, `@ifndef`, `@elseif`, `@else`, `@endif` with predefined platform and module-kind symbols.
+- **Conditional compilation**: `@define`, `@ifdef`, `@ifndef`, `@elseif`, `@else`, `@endif` with predefined platform and module-kind symbols (`TARGET_WIN64`, `TARGET_LINUX64`, `DEBUG`, `RELEASE`, and more) -- working in imported units too.
 - **Version info and icons**: Embed Windows version information and application icons into executables via directives. No post-build steps or resource compilers required.
 - **SSA optimization**: Mem2Reg, constant folding, and dead code elimination passes on the intermediate representation.
 
 ## 🚀 Getting Started
 
-Every Myrissa program is a **module**. The module kind (`exe`, `dll`, `lib`, `unit`, or `mem`) is declared at the top of the file and determines what artifact gets built. An executable module has a `begin..end.` body that serves as the program entry point.
+Every Myrissa program is a **module**. The module kind (`exe`, `dll`, `lib`, or `unit`) is declared at the top of the file and determines what artifact gets built. An executable module has a `begin..end.` body that serves as the program entry point.
 
 ```myrissa
 module exe hello;
 
-@optimize debug
+@optimize debug;
 
 routine greet(const name: string; const times: int32);
 var
@@ -98,13 +99,63 @@ Hello, Myrissa! (3)
 
 The output type is determined by the `module` declaration, not by CLI flags:
 
-| Module Declaration | Output | Description |
-|-------------------|--------|-------------|
-| `module exe name` | `name.exe` | Native Win64 executable |
-| `module dll name` | `name.dll` | Dynamic link library with exported routines |
-| `module lib name` | `name.lib` | Standard Win64 static library, linkable by Myrissa or other compilers |
-| `module mem name` | (in memory) | Compile to memory and execute via the API (requires a host application) |
+| Module Declaration | Output (win64 / linux64) | Description |
+|-------------------|--------------------------|-------------|
+| `module exe name` | `name.exe` / `name` | Native executable |
+| `module dll name` | `name.dll` / `name.so` | Dynamic library with exported routines |
+| `module lib name` | `name.lib` / `name.a` | Static library, linkable by Myrissa or other compilers |
 | `module unit name` | (none) | Reusable module compiled inline into the importing module |
+
+
+## 🌍 One Binding, Every Platform
+
+Myrissa's CImporter turns a C header into a Myrissa binding unit that works on both targets. The generated unit selects the right native library per target and declares every routine against a single module-level constant:
+
+```myrissa
+module unit RayLib;
+
+@ifdef TARGET_WIN64
+  @copydll "res/libs/vendor/raylib/win64/raylib.dll";
+@elseif TARGET_LINUX64
+  @copydll "res/libs/vendor/raylib/linux64/libraylib.so.550";
+@else
+  @message error "RayLib: unsupported target";
+@endif
+
+public const
+  DLL_NAME: string = "raylib";
+
+public routine InitWindow(const width: int32; const height: int32;
+  const title: pointer); external DLL_NAME;
+```
+
+Consuming it takes two `@libpath` directives and an `import`:
+
+```myrissa
+module exe game;
+
+@libpath "res/libs/vendor/raylib";
+@libpath "res/libs/vendor/raylib/linux64";
+
+import
+  RayLib;
+
+begin
+  RayLib.InitWindow(800, 450, "Myrissa + raylib");
+  RayLib.SetTargetFPS(60);
+
+  while not RayLib.WindowShouldClose() do
+    RayLib.BeginDrawing();
+      RayLib.ClearBackground(RayLib.RAYWHITE);
+      RayLib.DrawText("Hello from Myrissa!", 280, 200, 20, RayLib.DARKGREEN);
+    RayLib.EndDrawing();
+  end;
+
+  RayLib.CloseWindow();
+end.
+```
+
+On win64 the extensionless `DLL_NAME` resolves to `raylib.dll`; on linux64 the library search paths are probed for `libraylib.so.<version>` and the found file becomes the runtime dependency, loaded from beside the executable. The `@copydll` directive places the correct native library next to your binary at build time. Same source, same binding -- two platforms.
 
 
 ## 📖 Documentation
@@ -150,6 +201,7 @@ myrc -s hello.myr -d           # compile and launch debugger
 | | Requirement |
 |---|---|
 | **Host OS** | Windows 10/11 x64 |
+| **Compilation targets** | Windows x64 (PE), Linux x64 (ELF) -- both cross-compiled from the Windows host |
 | **Runtime dependencies** | None |
 | **External toolchain** | None |
 
@@ -202,7 +254,7 @@ If Myrissa saves you time, sparks an idea, or becomes part of something you ship
 
 ## 📄 License
 
-Myrissa is licensed under the **Apache License 2.0**. See [LICENSE](https://github.com/tinyBigGAMES/Myrissa?tab=Apache-2.0-1-ov-file) for details.
+Myrissa is licensed under the **Apache License 2.0**. See [LICENSE](https://github.com/tinyBigGAMES/Myrissa?tab=Apache-2.0-1-ov-file#License-1-ov-file) for details.
 
 
 ## 🔗 Links
