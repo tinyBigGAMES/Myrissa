@@ -35,6 +35,7 @@ Hello, Myrissa!
 | 🚀 Run your first program | [Getting Started](#getting-started) | Minimal setup, first `.myr` file, build modes, and project layout |
 | 📘 Learn the language | [Language Reference](#language-reference) | Types, routines, records, objects, modules, directives, and unit tests |
 | 🧾 Verify exact syntax | [BNF Grammar](#bnf-grammar) | Formal grammar rules, lexical elements, and precedence |
+| 🧬 Understand how the compiler defines the language | [Langdef System](#langdef-system) | MLD meta-language: tokens, grammar, semantics, emitters |
 | 🛠️ Use the toolchain | [Tools](#tools) | Compiler, debugger, CImporter, and LSP workflow |
 | 🔌 Embed Myrissa | [API Reference](#api-reference) | `Myrissa.dll` lifecycle, handles, callbacks, strings, and error handling |
 | 🧪 Solve a task | [How-To Guide](#how-to-guide) | Practical recipes with complete examples |
@@ -74,15 +75,23 @@ Source (.myr)
     |
     v
 +-------------------------------------------+
-|  Myrissa Compiler                         |
+|  Layer 1: Language-Agnostic Engine        |
+|  (reads .mld files at startup)            |
 |                                           |
-|  Lexer --> Parser --> AST                 |
+|  Lexer --> Pratt Parser --> AST           |
 |              |                            |
 |              v                            |
 |  Semantics (type check, symbol resolve)   |
 |              |                            |
 |              v                            |
-|  IR Generation --> SSA Optimization       |
+|  Emitters (IR builtins from .mld)         |
++-------------------------------------------+
+    |  IR instructions
+    v
++-------------------------------------------+
+|  Layer 2: Native Backend                  |
+|                                           |
+|  IR --> SSA Optimization                  |
 |              |                            |
 |              v                            |
 |  x64 Codegen (register alloc, encoding)   |
@@ -95,9 +104,12 @@ Source (.myr)
     v
 Output: .exe / .dll / .lib (win64)
         elf / .so / .a    (linux64)
+
+Layer 3: .mld definition files
+(tokens, grammar, semantics, emitters -- the language itself)
 ```
 
-The compiler is built as a layered pipeline. Each stage has a clean responsibility, and the same front end, IR, optimizer, and code generator serve every output target and platform. The final output writer determines whether the result becomes a PE or ELF executable, dynamic library, static library, or unit module.
+The compiler is built as a three-layer pipeline. Layer 1 is a language-agnostic engine that reads `.mld` definition files at startup and uses them to lex, parse, analyze, and emit IR instructions. Layer 2 is the native backend that optimizes the IR through SSA passes and generates x64 machine code. Layer 3 is the `.mld` files themselves — plain-text definitions that specify everything about the Myrissa language. Change the `.mld` files and you change the language without recompiling the compiler.
 
 
 ### 🧩 Toolchain Map
@@ -139,7 +151,8 @@ The compiler stack is working end-to-end with support for:
 - Win64 and SysV ABI calling conventions, including C-style linkage and `cpplink`
 - PE generation with `.text`, `.rdata`, `.data`, `.idata`, `.edata`, `.pdata`, and `.reloc` sections; ELF generation for Linux executables, shared objects, and static libraries
 - DAP debugger, LSP server, and CImporter tooling
-- 130+ test cases covering language and toolchain behavior on both targets
+- Official test suite: 26 test files covering every major BNF section, passing on both win64 and linux64 targets
+- Language definition via `.mld` files: the entire language (tokens, grammar, semantics, emitters) is defined in editable plain-text definition files that the engine reads at startup
 
 
 ### 💻 System Requirements
@@ -158,6 +171,7 @@ The compiler stack is working end-to-end with support for:
 - 🚀 [Getting Started](#getting-started): installation assumptions, first script, build modes, project layout, editor support
 - 📘 [Language Reference](#language-reference): types, operators, routines, control flow, records, objects, modules, directives, and tests
 - 🧾 [BNF Grammar](#bnf-grammar): formal grammar and lexical rules
+- 🧬 [Langdef System](#langdef-system): MLD meta-language reference
 - 🛠️ [Tools](#tools): compiler, debugger, CImporter, and LSP server
 - 🔌 [API Reference](#api-reference): `Myrissa.dll` C API for embedding
 - 🧪 [How-To Guide](#how-to-guide): practical recipes for common tasks
@@ -807,6 +821,33 @@ until i >= 10;
 
 The body executes at least once. The loop exits when the condition becomes true.
 
+#### ⏭️ Break and Continue
+
+`break` exits the innermost loop immediately; `continue` skips to the next
+iteration. Both are valid only inside a `while`, `for`, or `repeat` body --
+using them anywhere else is a compile error. In a `for` loop, `continue`
+still performs the iterator step before the bound is re-tested.
+
+```
+// Find the first index of a value; stop scanning once found
+var found: int32 = -1;
+for i := 0 to 9 do
+  if data[i] = target then
+    found := i;
+    break;
+  end;
+end;
+
+// Sum only even numbers
+var sum: int32 = 0;
+for i := 0 to 100 do
+  if (i mod 2) <> 0 then
+    continue;
+  end;
+  sum += i;
+end;
+```
+
 #### 🎯 Match Statement
 
 Use `match` for value-based branching. Match arms can contain single values, comma-separated values, or ranges:
@@ -1218,7 +1259,9 @@ Intrinsics are built-in operations recognized directly by the compiler:
 |-----------|-------------|
 | `len(expr)` | Length of a string, wide string, or dynamic array |
 | `size(Type)` | Byte size of a type or expression |
-| `utf8(wstr)` | Convert a wide string to a UTF-8 string |
+| `utf8(wideStr)` | Convert a wide string to a newly allocated raw UTF-8 buffer (`char*`). The caller owns the buffer |
+| `cstr(str)` | Borrowed raw UTF-8 `char*` into an existing string's own storage. Allocates nothing, must never be freed, valid only while the string is alive |
+| `wstr(str)` | Borrowed UTF-16 `wchar*` of a string. The runtime widens once and caches the buffer on the string itself, so repeat calls are free and it must never be freed by the caller |
 | `paramcount()` | Number of command-line arguments |
 | `paramstr(n)` | Get command-line argument by index |
 | `print(...)` | Print values without newline |
@@ -1314,11 +1357,41 @@ Directives are compile-time instructions prefixed with `@`. Every directive is t
 | `@resfile "path";` | Link a compiled resource file (.res) |
 | `@outputpath "path";` | Set the output directory |
 | `@copydll "path";` | Copy a DLL/shared library to the output directory during build |
-| `@libpath "path";` | Add a library/module search path |
+| `@linklibrary "path";` | Link an additional static or shared library into the output |
+| `@libpath "path";` | Add a library search path |
+| `@modulepath "path";` | Add a module (unit) search path |
+| `@includepath "path";` | Add an include search path |
 | `@subsystem <mode>;` | Set the application subsystem to `console` (default) or `gui`. Windows-only: on linux64 it produces a warning and is ignored |
 | `@target <platform>;` | Set the compilation target to `win64` (default) or `linux64`. Must appear in the root module |
 | `@optimize <level>;` | Set the optimization level: `debug`, `none`, `basic`, or `full` |
 | `@unittestmode <state>;` | Enable (`on`) or disable (`off`) test block compilation |
+
+#### 📁 Path Resolution
+
+Every directive that takes a `"path"` resolves it the same way. Absolute paths
+are used as-is. A relative path resolves against the directory of the module
+that declares it, so a module and the files it references travel together.
+
+An optional prefix overrides that base:
+
+| Prefix | Resolves against | Use for |
+|--------|------------------|---------|
+| `$P:` | Directory of the compiler executable | Assets shipped with the compiler |
+| `$D:` | Current working directory | Paths relative to where the compiler ran |
+| `$S:` | Declaring module's directory (the default, said out loud) | Mixed-base modules |
+
+The prefix is matched case-insensitively at the start of the string only.
+
+Use `$P:` in any module that will be imported from another folder. Without it,
+a vendor binding's `@copydll` resolves against the binding's own directory and
+breaks the moment the module is used from somewhere else:
+
+```
+@copydll "$P:res/libs/vendor/raylib/win64/raylib.dll";
+@libpath "$P:res/libs/vendor/raylib";
+@exeicon "$P:res/assets/icons/myrissa.ico";
+```
+
 
 #### 🏷️ Version Information Directives
 
@@ -1349,9 +1422,9 @@ Generated vendor bindings are unit modules that declare the library's routines w
 module unit RayLib;
 
 @ifdef TARGET_WIN64
-  @copydll "res/libs/vendor/raylib/win64/raylib.dll";
+  @copydll "$P:res/libs/vendor/raylib/win64/raylib.dll";
 @elseif TARGET_LINUX64
-  @copydll "res/libs/vendor/raylib/linux64/libraylib.so.550";
+  @copydll "$P:res/libs/vendor/raylib/linux64/libraylib.so.550";
 @else
   @message error "RayLib: unsupported target";
 @endif
@@ -1365,8 +1438,8 @@ A consumer only adds the vendor folder to the search path and imports the bindin
 ```
 module exe demo;
 
-@libpath "res/libs/vendor/raylib";
-@libpath "res/libs/vendor/raylib/linux64";   // .so probing on linux64
+@libpath "$P:res/libs/vendor/raylib";
+@libpath "$P:res/libs/vendor/raylib/linux64";   // .so probing on linux64
 
 import RayLib;
 
@@ -1464,6 +1537,7 @@ end;
 | `asserttrue(expr)` | Fails if expression is not true |
 | `assertfalse(expr)` | Fails if expression is not false |
 | `asserteq(expected, actual)` | Fails if values are not equal (type-dispatched) |
+| `asserteqf(expected, actual, epsilon)` | Float equality within a tolerance; fails if the difference exceeds `epsilon` |
 | `assertnil(expr)` | Fails if expression is not nil |
 | `assertnotnil(expr)` | Fails if expression is nil |
 | `assertfail("message")` | Unconditional failure with a message |
@@ -1600,8 +1674,9 @@ The language is **case-sensitive** for keywords and identifiers.
 
 ```
 address    align      and        array      assert     asserteq
-assertfalse assertfail assertnil assertnotnil asserttrue
-begin      choices    const      cpplink    create     destroy
+asserteqf  assertfalse assertfail assertnil assertnotnil asserttrue
+begin      break      choices    clink      const      continue   cpplink
+create     cstr       destroy
 div        do         downto     else       end        except
 exccode    excmsg     external   false      finalize   finally
 for        freemem    getmem     guard
@@ -1613,7 +1688,7 @@ println    public     record     repeat     resizemem
 return     routine    self       set        setlength  shl
 shr        size       test       then       throw
 throwcode  to         true       type       until      utf8
-var        varargs    while      xor
+var        varargs    while      wstr       xor
 ```
 
 > [!NOTE]
@@ -1694,7 +1769,7 @@ Module        = "module" ModuleKind ident ";" [ Directives ] [ ImportClause ]
                 { Declaration }
                 [ "initialize" StatementSeq "end" ";" ]
                 [ "finalize" StatementSeq "end" ";" ]
-                [ "begin" StatementSeq ] "end" "."
+                "begin" StatementSeq "end" "."
                 { TestBlock } .
 
 ModuleKind    = "exe" | "dll" | "lib" | "unit" .
@@ -1764,11 +1839,43 @@ form for enumerated values; quoted strings are reserved for paths and free text.
 - `@resfile "path";` -- Specifies a compiled resource file (.res) to link into the output.
 - `@outputpath "path";` -- Sets the output directory for the compiled binary.
 - `@copydll "path";` -- Copies a DLL/shared library to the output directory during build.
+- `@linklibrary "path";` -- Links an additional static or shared library into the output.
 - `@libpath "path";` -- Adds a directory to the library and module search path.
+- `@modulepath "path";` -- Adds a directory to the module (unit) search path.
+- `@includepath "path";` -- Adds a directory to the include search path.
 - `@subsystem console|gui;` -- Sets the application subsystem (bare identifier). Default: `console`. Windows-only: on the linux64 target it produces a warning and is ignored.
 - `@target win64|linux64;` -- Sets the compilation target (bare identifier). Default: `win64`. Overrides the API SetTarget for the current compile only; must appear in the root module.
 - `@optimize debug|none|basic|full;` -- Sets optimization level (bare identifier).
 - `@unittestmode on|off;` -- Enables or disables test block compilation and test runner entry point (bare identifier).
+
+##### Path resolution
+
+Every directive taking a `"path"` resolves it the same way. An absolute path is
+used as-is. A relative path resolves against the directory of the module that
+declares the directive, so a module and the files it references travel together.
+
+An optional prefix overrides that base:
+
+| Prefix | Base | Use for |
+|---|---|---|
+| `$P:` | Directory of the running compiler executable | Shipped assets under the compiler's own `res` tree |
+| `$D:` | Current working directory | Paths relative to where the compiler was invoked |
+| `$S:` | Declaring module's directory -- the default, stated explicitly | Clarity in modules that mix bases |
+
+The prefix is matched case-insensitively and only at the very start of the
+string. A path containing `$P:` anywhere else is left alone.
+
+`$P:` is the correct choice for any module meant to be imported from another
+folder. A vendor binding that says `@copydll "res/libs/vendor/raylib/win64/raylib.dll"`
+resolves against its own directory and fails as soon as the module is used from
+elsewhere; the `$P:` form always finds the file shipped beside the compiler:
+
+```
+@copydll "$P:res/libs/vendor/raylib/win64/raylib.dll";
+@libpath "$P:res/libs/vendor/raylib";
+@exeicon "$P:res/assets/icons/myrissa.ico";
+```
+
 
 **Version information directives** (for embedding in the PE executable):
 
@@ -1836,7 +1943,7 @@ ExternalVarClause = "external" [ cstring | ident ] ";" .
 RoutineDecl     = "routine" [ LinkageSpec ] ident [ FormalParams ] [ ":" TypeExpr ] ";"
                   ( ExternalClause | RoutineBody ) .
 
-LinkageSpec     = "cpplink" .
+LinkageSpec     = "clink" | "cpplink" .
 
 FormalParams    = "(" [ ParamList ] ")" .
 ParamList       = ParamDecl { ";" ParamDecl } [ ";" "..." ] | "..." .
@@ -1850,7 +1957,7 @@ RoutineBody     = [ "type" { TypeDecl } ]
                   "begin" StatementSeq "end" ";" .
 ```
 
-- **Default linkage**: Routines use C calling convention and naming by default.
+- **C linkage (`clink`)**: Explicit C calling convention and naming. This is also the default when no linkage spec is given.
 - **C++ linkage (`cpplink`)**: Enables Itanium ABI name mangling for C++ interoperability and overloading.
 
 #### 🔗 External Clause Semantics
@@ -1934,7 +2041,8 @@ QualIdent       = ident { "." ident } .
 StatementSeq    = { Statement } .
 
 Statement       = [ Assignment | CallStmt | IfStmt | WhileStmt | ForStmt
-                | RepeatStmt | MatchStmt | ReturnStmt | GuardStmt | RaiseStmt
+                | RepeatStmt | BreakStmt | ContinueStmt
+                | MatchStmt | ReturnStmt | GuardStmt | RaiseStmt
                 | CreateStmt | DestroyStmt
                 | GetMemStmt | FreeMemStmt | ResizeMemStmt | SetLengthStmt
                 | PrintStmt
@@ -1952,6 +2060,9 @@ ForStmt         = "for" ident ":=" Expression ( "to" | "downto" ) Expression
                   "do" StatementSeq "end" [ ";" ] .
 
 RepeatStmt      = "repeat" StatementSeq "until" Expression [ ";" ] .
+
+BreakStmt       = "break" [ ";" ] .
+ContinueStmt    = "continue" [ ";" ] .
 
 MatchStmt       = "match" Expression "of" { MatchArm } [ "else" StatementSeq ] "end" [ ";" ] .
 MatchArm        = MatchLabel { "," MatchLabel } ":" StatementSeq .
@@ -1975,6 +2086,12 @@ SetLengthStmt   = "setlength" "(" Expression "," Expression ")" [ ";" ] .
 PrintStmt       = ( "print" | "println" ) "(" [ ArgList ] ")" [ ";" ] .
 ```
 
+> [!NOTE]
+> `break` and `continue` are valid only inside a `while`, `for`, or `repeat`
+> body (compile error SEM008 otherwise). `break` exits the innermost loop;
+> `continue` starts its next iteration. In a `for` loop, `continue` still
+> performs the iterator step before re-testing the bound.
+
 #### 🧪 Assert Statements (Unit Testing)
 
 Assert statements are available in all code but are primarily used inside test blocks.
@@ -1987,6 +2104,7 @@ AssertStmt      = ( "assert" "(" Expression ")"
                   | "asserttrue" "(" Expression ")"
                   | "assertfalse" "(" Expression ")"
                   | "asserteq" "(" Expression "," Expression ")"
+                  | "asserteqf" "(" Expression "," Expression "," Expression ")"
                   | "assertnil" "(" Expression ")"
                   | "assertnotnil" "(" Expression ")"
                   | "assertfail" "(" Expression ")" ) [ ";" ] .
@@ -1996,6 +2114,7 @@ AssertStmt      = ( "assert" "(" Expression ")"
 - `asserttrue(expr)` -- Fails if `expr` is not true.
 - `assertfalse(expr)` -- Fails if `expr` is not false.
 - `asserteq(expected, actual)` -- Fails if values are not equal. Type-dispatched: the compiler selects the appropriate comparison (int, uint, float, string, bool, pointer) based on operand types.
+- `asserteqf(expected, actual, epsilon)` -- Float equality within a tolerance. Fails if `|expected - actual| > epsilon`. All three operands must be `float32` or `float64`; a non-float operand is a compile error, not an implicit conversion.
 - `assertnil(expr)` -- Fails if `expr` is not nil.
 - `assertnotnil(expr)` -- Fails if `expr` is nil.
 - `assertfail("message")` -- Unconditional failure with a message.
@@ -2044,12 +2163,14 @@ TypeCast        = TypeExpr "(" Expression ")" .
 ### ⚡ 13. Intrinsics
 
 ```
-Intrinsic       = LenExpr | SizeExpr | Utf8Expr | ParamCountExpr | ParamStrExpr
-                | ExcCodeExpr | ExcMsgExpr .
+Intrinsic       = LenExpr | SizeExpr | Utf8Expr | CStrExpr | WStrExpr
+                | ParamCountExpr | ParamStrExpr | ExcCodeExpr | ExcMsgExpr .
 
 LenExpr         = "len" "(" Expression ")" .
 SizeExpr        = "size" "(" ( TypeExpr | Expression ) ")" .
 Utf8Expr        = "utf8" "(" Expression ")" .
+CStrExpr        = "cstr" "(" Expression ")" .
+WStrExpr        = "wstr" "(" Expression ")" .
 ParamCountExpr  = "paramcount" "(" ")" .
 ParamStrExpr    = "paramstr" "(" Expression ")" .
 ExcCodeExpr     = "exccode" "(" ")" .
@@ -2059,7 +2180,14 @@ ExcMsgExpr      = "excmsg" "(" ")" .
 > [!NOTE]
 > `len` returns the length of strings, wide strings, and dynamic arrays.
 > `size` returns the byte size of a type or expression. `utf8` converts a wide
-> string to a UTF-8 managed string. Memory management (`create`/`destroy`/`getmem`/
+> string to a newly allocated, raw UTF-8 buffer (`char*`) - NOT a managed
+> string; the buffer is owned by the caller. `cstr` returns a BORROWED raw
+> UTF-8 `char*` pointing into an existing managed string's own storage - it
+> allocates nothing and must never be freed, and the pointer is valid only
+> while the owning string is alive. `wstr` is the UTF-16 counterpart of
+> `cstr`: it returns a BORROWED `wchar*` that the runtime widens once and
+> CACHES on the string itself, so repeat calls are free and the buffer must
+> never be freed by the caller. Memory management (`create`/`destroy`/`getmem`/
 > `freemem`/`resizemem`/`setlength`) is defined in Statements (Section 11).
 
 
@@ -2169,6 +2297,1988 @@ Use this checklist when updating the grammar or adding syntax:
 
 > [!WARNING]
 > 🧯 Keep grammar changes synchronized with examples. A grammar rule that accepts syntax not shown anywhere else is hard for users to discover, and an example that violates the grammar is worse than no example at all.
+
+<a id="langdef-system"></a>
+
+## 🧬 Langdef System
+
+Most compilers are sealed. The grammar lives in generated tables, the type rules live in hand-written passes, and the code generator is a wall of string building buried in the source. If you want to change the language, you fork the compiler.
+
+Myrissa is not built that way. **The language is defined by `.mld` files that ship as plain text beside the compiler.** The tokens, the type system, the grammar, the semantic rules, and the code generation emitters are all readable, editable definition files. The engine loads them at startup, populates its dispatch tables, and then compiles your `.myr` source with whatever those files say the language is.
+
+Change an `.mld` file and you have changed the language. That is the third pillar.
+
+> [!IMPORTANT]
+> 🔓 This is not a plugin API or an extension point. There is no privileged "real" grammar hidden underneath. The `.mld` files **are** Myrissa. Everything the compiler knows about the language, it read from them.
+
+This section is a complete reference for **MLD**, the Myrissa Language Definition format. It is written so you can build a language with it, not merely admire that it exists.
+
+### 🗂️ Section Contents
+
+| Part | Covers |
+|------|--------|
+| [The Engine and the Pipeline](#mld-engine) | What MLD is, how the two phases work, the eight files |
+| [File Structure](#mld-file-structure) | The `language` declaration and every top-level construct |
+| [Tokens Block](#mld-tokens) | Keywords, operators, comments, strings, directives, lexer config |
+| [Types Block](#mld-types) | Type keywords, C++ mappings, literal types, the compatibility matrix |
+| [Grammar Block](#mld-grammar) | Pratt parsing: prefix, infix, statement rules, binding powers |
+| [Semantics Block](#mld-semantics) | Scopes, symbols, multi-pass analysis |
+| [Emitters Block](#mld-emitters) | Statement and expression emission, headers, directives |
+| [The Imperative Language](#mld-imperative) | Variables, control flow, operators, interpolation, diagnostics |
+| [Routines, Constants, Enums](#mld-routines) | User-defined helpers |
+| [Fragments, Imports, Guards](#mld-fragments) | Reuse and conditional inclusion |
+| [Built-in Function Reference](#mld-builtins) | Every builtin, by context |
+| [Formal Grammar (EBNF)](#mld-ebnf) | The complete MLD meta-grammar |
+
+<a id="mld-engine"></a>
+
+### ⚙️ The Engine and the Pipeline
+
+MLD is the meta-language used to define Myrissa. An `.mld` file describes a **complete compiler pipeline**: lexer tokens, Pratt parser grammar, multi-pass semantic analysis, and code generation. The engine reads the `.mld` files, populates its internal dispatch tables, and then uses those tables to compile `.myr` source into IR/native, which the bundled native toolchain builds into a native binary.
+
+Compilation happens in two phases:
+
+| Phase | What Happens |
+|-------|--------------|
+| **Setup** | The `.mld` files are parsed. Their contents populate dispatch tables: token registrations, grammar rules, semantic handlers, emitter handlers, user-defined routines. |
+| **Compile** | Those tables drive a generic lexer, a Pratt parser, a semantic analyzer, and a code generator, which process `.myr` source and produce IR/native. |
+
+Nothing about Myrissa is hard-coded into the engine. The engine is a machine that runs language definitions. Myrissa is one such definition.
+
+#### The Six Files
+
+Myrissa's definition lives in `bin/res/language/`. `myrissa.mld` is the root; it imports the rest.
+
+| File | Purpose |
+|------|---------|
+| `myrissa.mld` | Root: language declaration, imports, defines, module paths |
+| `myrissa_tokens.mld` | Token declarations and the type system |
+| `myrissa_helpers.mld` | Shared routines (linkage helpers, type resolution utilities) |
+| `myrissa_grammar.mld` | Grammar rules: prefix, infix, and statement |
+| `myrissa_semantics.mld` | Semantic analysis handlers |
+| `myrissa_emitters.mld` | Code generation handlers (IR emission via `ir*` builtins) |
+
+> [!NOTE]
+> 🧩 There is no host-language glue. No C, no Python, no build-system integration, no escape hatch out of MLD into "the real compiler." An `.mld` file is a complete, self-contained, portable language specification.
+
+<a id="mld-file-structure"></a>
+
+### 📄 File Structure
+
+An `.mld` file begins with a `language` declaration and contains top-level blocks. Comments use `//` (line) and `/* ... */` (block).
+
+```mld
+language Myrissa version "1.0";
+
+// Constants must appear before they are referenced.
+const {
+  ENABLE_OVERLOADS    = true;
+  ENABLE_FORWARD_REFS = true;
+}
+
+// Conditional-compilation symbols visible to @ifdef in .myr source.
+setDefine("MYRA");
+
+// Where `import` in .myr source looks for modules.
+addModulePath("res/libs/std");
+
+// Load the rest of the definition.
+import "myrissa_tokens.mld";
+import "myrissa_utils.mld";
+import "myrissa_helpers.mld";
+import "myrissa_grammar.mld";
+import "myrissa_semantics.mld";
+import "myrissa_emitters.mld";
+
+tokens    { /* keywords, operators, delimiters, strings, directives, config */ }
+types     { /* type keywords, C++ mappings, compatibility matrix */ }
+grammar   { /* prefix, infix, and statement rules */ }
+semantics { /* scope, declare, visit */ }
+emitters  { /* code generation */ }
+
+// Reusable helpers, callable from any handler.
+routine resolveType(typeText: string) -> string {
+  if typeText == "int32" { return "int32_t"; }
+  return typeText;
+}
+```
+
+Every top-level construct:
+
+| Construct | Description |
+|-----------|-------------|
+| `language Name version "X.Y";` | Language declaration. **Required, must be first.** |
+| `tokens { ... }` | Token declarations and lexer configuration |
+| `types { ... }` | Type system configuration |
+| `grammar { ... }` | Parser grammar rules |
+| `semantics { ... }` | Semantic analysis handlers |
+| `emitters { ... }` | Code generation handlers |
+| `const { ... }` | Named constants |
+| `enum Name { ... }` | Enum declaration |
+| `routine name(...) -> t { ... }` | User-defined routine |
+| `fragment name { ... }` | Reusable declaration block |
+| `import "file.mld";` | Load an external `.mld` file |
+| `include fragmentName;` | Expand a fragment |
+| `guard EXPR { ... }` | Conditional inclusion |
+
+Each block feeds one stage of the pipeline:
+
+| Block | Drives | Answers |
+|-------|--------|---------|
+| `tokens` | The lexer | What words and symbols exist? |
+| `types` | The type system | What is `int32`, and what C++ does it become? |
+| `grammar` | The Pratt parser | How do tokens become an AST? |
+| `semantics` | The analyzer | Is this program meaningful? |
+| `emitters` | The code generator | What IR/native comes out? |
+
+<a id="mld-tokens"></a>
+
+### 🔤 Tokens Block
+
+The `tokens {}` block teaches the lexer how to break source into meaningful pieces. Every declaration follows one pattern:
+
+```mld
+token category.name = "text" [flags];
+```
+
+The category prefix determines how the token is registered with the engine.
+
+| Category | Description |
+|----------|-------------|
+| `keyword.*` | Reserved word |
+| `op.*` | Operator |
+| `delimiter.*` | Punctuation |
+| `comment.line` | Line-comment prefix |
+| `comment.block_open` / `comment.block_close` | Block-comment delimiters |
+| `string.*` | String literal style |
+| `directive.*` | Named directive |
+
+#### Keywords
+
+Once declared, the lexer emits the specified token kind instead of `identifier`. These words can never be used as variable or routine names.
+
+```mld
+tokens {
+  casesensitive = true;
+
+  // Module structure
+  token keyword.module    = "module";
+  token keyword.import    = "import";
+  token keyword.exported  = "exported";
+  token keyword.external  = "external";
+
+  // Linkage. cpplink is the DEFAULT; clink selects C linkage.
+  token keyword.clink     = "clink";
+  token keyword.cpplink   = "cpplink";
+
+  // Control flow
+  token keyword.begin     = "begin";
+  token keyword.end       = "end";
+  token keyword.if        = "if";
+  token keyword.then      = "then";
+  token keyword.else      = "else";
+  token keyword.while     = "while";
+  token keyword.do        = "do";
+  token keyword.for       = "for";
+  token keyword.to        = "to";
+  token keyword.downto    = "downto";
+  token keyword.repeat    = "repeat";
+  token keyword.until     = "until";
+  token keyword.match     = "match";
+  token keyword.return    = "return";
+  token keyword.leave     = "leave";
+  token keyword.skip      = "skip";
+
+  // Declarations
+  token keyword.var       = "var";
+  token keyword.const     = "const";
+  token keyword.type      = "type";
+  token keyword.routine   = "routine";
+  token keyword.method    = "method";
+
+  // Type definitions
+  token keyword.record    = "record";
+  token keyword.object    = "object";
+  token keyword.overlay   = "overlay";
+  token keyword.choices   = "choices";
+  token keyword.packed    = "packed";
+  token keyword.align     = "align";
+  token keyword.array     = "array";
+  token keyword.of        = "of";
+  token keyword.set       = "set";
+  token keyword.pointer   = "pointer";
+
+  // Word operators
+  token keyword.and       = "and";
+  token keyword.or        = "or";
+  token keyword.not       = "not";
+  token keyword.xor       = "xor";
+  token keyword.div       = "div";
+  token keyword.mod       = "mod";
+  token keyword.shl       = "shl";
+  token keyword.shr       = "shr";
+  token keyword.in        = "in";
+  token keyword.is        = "is";
+
+  // Output intrinsics
+  token keyword.print     = "print";
+  token keyword.println   = "println";
+
+  // Literals
+  token keyword.true      = "true";
+  token keyword.false     = "false";
+  token keyword.nil       = "nil";
+}
+```
+
+Want `func` instead of `routine`? Change one string.
+
+> [!WARNING]
+> ⚠️ `keyword.is` is **declared** in `myrissa_tokens.mld` but has **no grammar production**. It lexes, and then nothing consumes it. The same is true of `op.pipe` (`|`) and `op.ampersand` (`&`). These are reserved for future use. Do not build on them.
+
+#### Operators and Delimiters
+
+The engine sorts operators by length internally so longest-match wins (`:=` matches before `:`). Declaring multi-character operators first is documentation, not a requirement.
+
+```mld
+tokens {
+  // Multi-character
+  token op.assign       = ":=";
+  token op.plus_assign  = "+=";
+  token op.minus_assign = "-=";
+  token op.mul_assign   = "*=";
+  token op.div_assign   = "/=";
+  token op.neq          = "<>";
+  token op.lte          = "<=";
+  token op.gte          = ">=";
+  token op.ellipsis     = "...";
+  token op.range        = "..";
+
+  // Single-character
+  token op.eq           = "=";
+  token op.lt           = "<";
+  token op.gt           = ">";
+  token op.plus         = "+";
+  token op.minus        = "-";
+  token op.multiply     = "*";
+  token op.divide       = "/";
+  token op.deref        = "^";
+
+  // Delimiters
+  token delimiter.lparen    = "(";
+  token delimiter.rparen    = ")";
+  token delimiter.lbracket  = "[";
+  token delimiter.rbracket  = "]";
+  token delimiter.comma     = ",";
+  token delimiter.colon     = ":";
+  token delimiter.semicolon = ";";
+  token delimiter.dot       = ".";
+}
+```
+
+#### Comments
+
+Line comments use `comment.line`. Block comments require a matched open/close pair. Multiple styles may be declared.
+
+```mld
+tokens {
+  token comment.line        = "//";
+  token comment.block_open  = "/*";
+  token comment.block_close = "*/";
+}
+```
+
+#### String Styles
+
+With no flags, a string style processes backslash escapes (`\n`, `\t`, `\\`) and uses its pattern text as both the opening and the closing delimiter.
+
+```mld
+tokens {
+  token string.cstring = "\"";                  // "..."
+  token string.wstring = "w\"" [close "\""];    // w"..." closes on "
+}
+```
+
+| Flag | Description |
+|------|-------------|
+| `noescape` | Disable backslash escapes. Two consecutive close delimiters mean one literal close delimiter (the Pascal `''` convention). |
+| `close "X"` | Use `X` as the closing delimiter instead of the opening pattern. |
+
+#### Directives
+
+Directives are a **two-tier system**. Conditional-compilation directives are consumed by the **lexer** at lex time and never reach the parser. Every other directive is passed through as a regular token for a `stmt.directive_*` grammar rule to consume.
+
+```mld
+tokens {
+  directive_prefix = "@";
+
+  // Tier 1: consumed by the lexer
+  token directive.define  = "define" [define];
+  token directive.undef   = "undef"  [undef];
+  token directive.ifdef   = "ifdef"  [ifdef];
+  token directive.ifndef  = "ifndef" [ifndef];
+  token directive.elseif  = "elseif" [elseif];
+  token directive.else    = "else"   [else];
+  token directive.endif   = "endif"  [endif];
+
+  // Tier 2: passed to the parser as tokens
+  token directive.target        = "target";
+  token directive.optimize      = "optimize";
+  token directive.subsystem     = "subsystem";
+  token directive.exeicon       = "exeicon";
+  token directive.copydll       = "copydll";
+  token directive.linklibrary   = "linklibrary";
+  token directive.librarypath   = "librarypath";
+  token directive.modulepath    = "modulepath";
+  token directive.includepath   = "includepath";
+  token directive.breakpoint    = "breakpoint";
+  token directive.message       = "message";
+  token directive.unittestmode  = "unitTestMode";
+  // ... plus the version-info family
+}
+```
+
+| Flag | Meaning |
+|------|---------|
+| `define` | This token is `@define` |
+| `undef` | This token is `@undef` |
+| `ifdef` | This token is `@ifdef` |
+| `ifndef` | This token is `@ifndef` |
+| `elseif` | This token is `@elseif` |
+| `else` | This token is `@else` |
+| `endif` | This token is `@endif` |
+
+> [!IMPORTANT]
+> 🧱 This is why Myrissa has **two** conditional systems that look alike but are not. `@ifdef` is a Myrissa-level directive resolved by the lexer against a compile-time symbol table. `#if defined(...)` is a C++ preprocessor line that passes straight through to the generated C++ and is resolved by clang. They do not see each other's symbols.
+
+#### Structural Configuration
+
+Key-value assignments inside `tokens {}` configure the engine.
+
+```mld
+tokens {
+  casesensitive = true;
+  terminator    = delimiter.semicolon;
+  block_open    = keyword.begin;
+  block_close   = keyword.end;
+  hex_prefix    = "0x";
+  hex_prefix    = "0X";
+}
+```
+
+| Setting | Description |
+|---------|-------------|
+| `casesensitive = true/false;` | Keyword matching case sensitivity |
+| `identifier_start = "chars";` | Characters that may start an identifier |
+| `identifier_part = "chars";` | Characters that may continue an identifier |
+| `terminator = kind;` | Statement terminator token kind |
+| `block_open = kind;` | Block-open token kind |
+| `block_close = kind;` | Block-close token kind |
+| `directive_prefix = "text";` | Directive prefix characters |
+| `hex_prefix = "text";` | Hex literal prefix (repeatable) |
+| `binary_prefix = "text";` | Binary literal prefix |
+
+<a id="mld-types"></a>
+
+### 🔢 Types Block
+
+The `types {}` block connects three worlds: the **source type name** the user writes, the **internal type kind** the engine tracks, and the **C++ type** that comes out the far end. When a user writes `var x : int32;`, the types block says that `int32` is `type.int32` internally, and that `type.int32` becomes `int32_t` in C++.
+
+#### Type Keywords
+
+Map source type names to internal type kind strings.
+
+```mld
+types {
+  type int8     = "type.int8";
+  type int16    = "type.int16";
+  type int32    = "type.int32";
+  type int64    = "type.int64";
+  type uint8    = "type.uint8";
+  type uint16   = "type.uint16";
+  type uint32   = "type.uint32";
+  type uint64   = "type.uint64";
+  type float32  = "type.float32";
+  type float64  = "type.float64";
+  type boolean  = "type.boolean";
+  type char     = "type.char";
+  type wchar    = "type.wchar";
+  type string   = "type.string";
+  type wstring  = "type.wstring";
+  type pointer  = "type.pointer";
+  type set      = "type.set";
+}
+```
+
+#### Type Mappings
+
+Map internal type kinds to C++ output types.
+
+```mld
+types {
+  map "type.int8"    -> "int8_t";
+  map "type.int16"   -> "int16_t";
+  map "type.int32"   -> "int32_t";
+  map "type.int64"   -> "int64_t";
+  map "type.uint8"   -> "uint8_t";
+  map "type.uint16"  -> "uint16_t";
+  map "type.uint32"  -> "uint32_t";
+  map "type.uint64"  -> "uint64_t";
+  map "type.float32" -> "float";
+  map "type.float64" -> "double";
+  map "type.boolean" -> "bool";
+  map "type.char"    -> "char";
+  map "type.wchar"   -> "wchar_t";
+  map "type.string"  -> "std::string";
+  map "type.wstring" -> "std::wstring";
+  map "type.pointer" -> "void*";
+  map "type.set"     -> "MyrSet";
+}
+```
+
+This is the whole of "Myrissa's `int32` is C++'s `int32_t`." It is one line of editable text, not a compiler pass.
+
+#### Literal Type Mappings
+
+Connect AST node kinds produced by the parser to type kinds understood by the type system. Without these, a literal has no type.
+
+```mld
+types {
+  literal "expr.integer" = "type.int32";
+  literal "expr.float"   = "type.float64";
+  literal "expr.cstring" = "type.cstring";
+  literal "expr.cchar"   = "type.char";
+  literal "expr.wstring" = "type.wstring";
+  literal "expr.bool"    = "type.boolean";
+}
+```
+
+#### Type Compatibility
+
+Each `compatible` entry declares a source type, a target type, and the type the pair coerces to. This is how widening and promotion are defined. There is no built-in numeric tower; the matrix *is* the tower.
+
+```mld
+types {
+  // Signed widening
+  compatible "type.int8",  "type.int16" -> "type.int16";
+  compatible "type.int8",  "type.int32" -> "type.int32";
+  compatible "type.int16", "type.int32" -> "type.int32";
+  compatible "type.int32", "type.int64" -> "type.int64";
+
+  // Unsigned widening
+  compatible "type.uint8",  "type.uint16" -> "type.uint16";
+  compatible "type.uint16", "type.uint32" -> "type.uint32";
+  compatible "type.uint32", "type.uint64" -> "type.uint64";
+
+  // Float widening
+  compatible "type.float32", "type.float64" -> "type.float64";
+
+  // Integer to float promotion
+  compatible "type.int32", "type.float64" -> "type.float64";
+
+  // nil is assignable to any pointer
+  compatible "type.nil", "type.pointer";
+
+  // Character to string promotion
+  compatible "type.char",  "type.string"  -> "type.string";
+  compatible "type.wchar", "type.wstring" -> "type.wstring";
+}
+```
+
+When the `->` coercion target is omitted, it defaults to the target type.
+
+#### Declaration and Call Kinds
+
+Tell the semantic engine which node kinds are declarations and which are calls, and where a call node stores its callee name.
+
+```mld
+types {
+  decl_kind "stmt.var_decl";
+  call_kind "expr.call";
+  call_name_attr = "call.name";
+}
+```
+
+| Entry | Description |
+|-------|-------------|
+| `decl_kind "kind";` | Register a declaration node kind |
+| `call_kind "kind";` | Register a call node kind |
+| `call_name_attr = "attr";` | Attribute holding the callee name on call nodes |
+
+<a id="mld-grammar"></a>
+
+### 🌳 Grammar Block
+
+The `grammar {}` block turns a token stream into an AST. The engine runs a **Pratt parser**: every token can trigger a **prefix** handler (at the start of an expression), an **infix** handler (between two expressions), or a **statement** handler (at statement position).
+
+Which one a rule becomes is decided by its node-kind prefix and whether it declares a precedence.
+
+| Rule Shape | Registered As | Trigger |
+|------------|---------------|---------|
+| `rule expr.*` (no precedence) | Prefix | Its first `expect` / `consume` token |
+| `rule expr.* precedence left N` | Infix, left-associative | Its first `expect` / `consume` token |
+| `rule expr.* precedence right N` | Infix, right-associative | Its first `expect` / `consume` token |
+| `rule stmt.*` | Statement | Its first `expect` / `consume` token |
+
+#### Declarative Rule Vocabulary
+
+Inside a rule body, these forms are declarative shorthand. Anything they cannot express, you write imperatively (see [The Imperative Language](#mld-imperative)); the two mix freely in one body.
+
+| Syntax | Description |
+|--------|-------------|
+| `expect TOKEN_KIND;` | Assert the current token is `TOKEN_KIND` and consume it. Error if it is not. |
+| `consume TOKEN_KIND -> @attr;` | Consume the token and store its text as an attribute on the result node. |
+| `consume [K1, K2, ...] -> @attr;` | Consume if the current token is any of the listed kinds; store its text. |
+| `parse expr -> @attr;` | Parse a sub-expression at binding power 0 and add it as a child. |
+| `parse many stmt until KIND -> @attr;` | Parse statements until `KIND`; collect them into a block child. |
+| `optional { ... }` | Execute the block only if the next token permits it. |
+| `sync TOKEN_KIND;` | Declare an error-recovery point. |
+
+#### Prefix Rules
+
+Prefix rules fire when their trigger token appears at expression-start position: literals, identifiers, unary operators, grouped expressions, set literals.
+
+```mld
+grammar {
+  // Literals
+  rule expr.integer { consume literal.integer -> @value; }
+  rule expr.float   { consume literal.float   -> @value; }
+  rule expr.cstring { consume string.cstring  -> @value; }
+  rule expr.wstring { consume string.wstring  -> @value; }
+
+  // Keyword literals
+  rule expr.nil  { expect keyword.nil; }
+  rule expr.bool { consume keyword.true  -> @value; }
+  rule expr.bool { consume keyword.false -> @value; }
+
+  // Identifier
+  rule expr.ident { consume identifier -> @name; }
+
+  // Grouped expression
+  rule expr.grouped {
+    expect delimiter.lparen;
+    parse expr -> @inner;
+    expect delimiter.rparen;
+  }
+
+  // Unary operators bind at power 35
+  rule expr.not {
+    expect keyword.not;
+    let nd = getResultNode();
+    addChild(nd, parseExpr(35));
+  }
+  rule expr.negate {
+    expect op.minus;
+    let nd = getResultNode();
+    addChild(nd, parseExpr(35));
+  }
+
+  // Set literal: [a, b, x..y]
+  rule expr.set_literal {
+    expect delimiter.lbracket;
+    let nd = getResultNode();
+    if not checkToken("delimiter.rbracket") {
+      let elem = createNode("expr.set_element");
+      addChild(elem, parseExpr(0));
+      if matchToken("op.range") {
+        addChild(elem, parseExpr(0));
+      }
+      addChild(nd, elem);
+      while matchToken("delimiter.comma") {
+        let e2 = createNode("expr.set_element");
+        addChild(e2, parseExpr(0));
+        if matchToken("op.range") {
+          addChild(e2, parseExpr(0));
+        }
+        addChild(nd, e2);
+      }
+    }
+    requireToken("delimiter.rbracket");
+  }
+}
+```
+
+> [!WARNING]
+> ⚠️ The generic lexer produces `literal.integer` and `literal.float` tokens automatically, but the parser will **not** consume them without explicit prefix rules. Omit `rule expr.integer` and every numeric expression in your language fails to parse. This is the single most common mistake when starting a new `.mld`.
+
+#### Intrinsics as Prefix Rules
+
+Myrissa's intrinsics (`len`, `size`, `utf8`, `paramcount`, `paramstr`, `getmem`, `resizemem`, and the exception accessors) are not library functions. They are prefix rules that build an `expr.call` node with `call.name` pre-set, so the emitter sees an ordinary call.
+
+```mld
+grammar {
+  rule expr.call {
+    expect keyword.len;
+    let nd = getResultNode();
+    setAttr(nd, "call.name", "myr_len");
+    parseCallArgs(nd);
+  }
+
+  rule expr.call {
+    expect keyword.size;
+    let nd = getResultNode();
+    setAttr(nd, "call.name", "sizeof");
+    requireToken("delimiter.lparen");
+    setAttr(nd, "call.sizeof_type", currentText());
+    advance();
+    requireToken("delimiter.rparen");
+  }
+}
+```
+
+#### Infix Rules
+
+An infix rule fires when its trigger token appears *after* an already-parsed left expression. That left operand becomes **child 0** of the result node. Binding power decides grouping: `2 + 3 * 4` groups as `2 + (3 * 4)` because `*` (30) binds tighter than `+` (20).
+
+```mld
+grammar {
+  // Assignment: right-associative, power 2
+  rule expr.assign precedence right 2 {
+    consume [op.assign, op.plus_assign, op.minus_assign,
+             op.mul_assign, op.div_assign] -> @operator;
+    parse expr -> @right;
+  }
+
+  // Arithmetic
+  rule expr.binary precedence left 20 {
+    consume [op.plus, op.minus] -> @operator;
+    parse expr -> @right;
+  }
+  rule expr.binary precedence left 30 {
+    consume [op.multiply, op.divide] -> @operator;
+    parse expr -> @right;
+  }
+  rule expr.binary precedence left 30 {
+    consume [keyword.div, keyword.mod] -> @operator;
+    parse expr -> @right;
+  }
+
+  // Comparison
+  rule expr.binary precedence left 10 {
+    consume [op.eq, op.neq, op.lt, op.gt, op.lte, op.gte] -> @operator;
+    parse expr -> @right;
+  }
+
+  // Logical
+  rule expr.binary precedence left 8 {
+    consume [keyword.and, keyword.xor] -> @operator;
+    parse expr -> @right;
+  }
+
+  // Call: power 40
+  rule expr.call precedence left 40 {
+    expect delimiter.lparen;
+    let nd = getResultNode();
+    let left = getChild(nd, 0);
+    if nodeKind(left) == "expr.ident" {
+      setAttr(nd, "call.name", getAttr(left, "name"));
+    }
+    if not checkToken("delimiter.rparen") {
+      addChild(nd, parseExpr(0));
+      while matchToken("delimiter.comma") {
+        addChild(nd, parseExpr(0));
+      }
+    }
+    requireToken("delimiter.rparen");
+  }
+
+  // Array index: power 45
+  rule expr.array_index precedence left 45 {
+    expect delimiter.lbracket;
+    let nd = getResultNode();
+    addChild(nd, parseExpr(0));
+    requireToken("delimiter.rbracket");
+  }
+
+  // Field access: power 45
+  rule expr.field_access precedence left 45 {
+    expect delimiter.dot;
+    let nd = getResultNode();
+    setAttr(nd, "field.name", currentText());
+    advance();
+  }
+}
+```
+
+#### Binding Power Scale
+
+| Power | Category |
+|-------|----------|
+| 2 | Assignment (right-associative) |
+| 6 | Logical `or` |
+| 8 | Logical `and`, `xor` |
+| 10 | Comparison (`=`, `<>`, `<`, `>`, `<=`, `>=`) and set membership (`in`) |
+| 20 | Addition, subtraction |
+| 25 | Bit shift (`shl`, `shr`) |
+| 30 | Multiplication, division, `div`, `mod` |
+| 35 | Unary prefix (`not`, negate, address-of) |
+| 40 | Call |
+| 45 | Array index, field access |
+| 50 | Dereference |
+
+> [!TIP]
+> 💡 The precedence ladder in the [BNF Grammar](#myra-language-grammar) is not documentation *about* the parser. It is a reading of the numbers written in `myrissa_grammar.mld`. Change a number there and the ladder moves.
+
+#### Statement Rules
+
+Statement rules fire at statement position. They are where a language's shape actually lives.
+
+```mld
+grammar {
+  // if <expr> then <stmts> [else <stmts>] end
+  rule stmt.if {
+    expect keyword.if;
+    let nd = getResultNode();
+    addChild(nd, parseExpr(0));
+    requireToken("keyword.then");
+
+    let thenBranch = createNode("stmt.then_branch");
+    while not checkToken("keyword.else") and not checkToken("keyword.end")
+          and not checkToken("eof") {
+      let s = parseStmt();
+      if s != nil { addChild(thenBranch, s); }
+    }
+    addChild(nd, thenBranch);
+
+    if matchToken("keyword.else") {
+      let elseBranch = createNode("stmt.else_branch");
+      while not checkToken("keyword.end") and not checkToken("eof") {
+        let s = parseStmt();
+        if s != nil { addChild(elseBranch, s); }
+      }
+      addChild(nd, elseBranch);
+    }
+
+    requireToken("keyword.end");
+    matchToken("delimiter.semicolon");
+  }
+
+  // while <expr> do <stmts> end
+  rule stmt.while {
+    expect keyword.while;
+    let nd = getResultNode();
+    addChild(nd, parseExpr(0));
+    requireToken("keyword.do");
+    while not checkToken("keyword.end") and not checkToken("eof") {
+      let s = parseStmt();
+      if s != nil { addChild(nd, s); }
+    }
+    requireToken("keyword.end");
+    matchToken("delimiter.semicolon");
+  }
+
+  // for <ident> := <expr> (to|downto) <expr> do <stmts> end
+  rule stmt.for {
+    expect keyword.for;
+    let nd = getResultNode();
+    setAttr(nd, "for.var", currentText());
+    advance();
+    requireToken("op.assign");
+    addChild(nd, parseExpr(0));
+    if checkToken("keyword.to") {
+      setAttr(nd, "for.dir", "to");
+      advance();
+    } else {
+      requireToken("keyword.downto");
+      setAttr(nd, "for.dir", "downto");
+    }
+    addChild(nd, parseExpr(0));
+    requireToken("keyword.do");
+    while not checkToken("keyword.end") and not checkToken("eof") {
+      let s = parseStmt();
+      if s != nil { addChild(nd, s); }
+    }
+    requireToken("keyword.end");
+    matchToken("delimiter.semicolon");
+  }
+
+  // var { ident : type [= expr]; }
+  rule stmt.var_block {
+    expect keyword.var;
+    let nd = getResultNode();
+    while checkToken("identifier") {
+      let nameTok = currentText();
+      advance();
+      let v = createNode("stmt.var_decl");
+      setAttr(v, "var.name", nameTok);
+      requireToken("delimiter.colon");
+      setAttr(v, "var.type_text", collectTypeText());
+      if matchToken("op.eq") {
+        addChild(v, parseExpr(0));
+      }
+      requireToken("delimiter.semicolon");
+      addChild(nd, v);
+    }
+  }
+}
+```
+
+#### Linkage: How `clink` Is Parsed
+
+Linkage is a **keyword**, not a string. `cpplink` is the default and is stamped before any check, so an absent linkage spec still produces a well-formed attribute.
+
+```mld
+grammar {
+  rule stmt.routine_decl {
+    expect keyword.routine;
+    let nd = getResultNode();
+
+    // Default first, then override if a spec is present.
+    setAttr(nd, "decl.linkage", "cpplink");
+    if checkToken("keyword.clink") {
+      setAttr(nd, "decl.linkage", "clink");
+      advance();
+    } else if checkToken("keyword.cpplink") {
+      setAttr(nd, "decl.linkage", "cpplink");
+      advance();
+    }
+
+    setAttr(nd, "decl.name", currentText());
+    advance();
+
+    // Parameters, return type, `external`, or a body follow.
+  }
+}
+```
+
+#### The Myrissa Rule Catalog
+
+What follows is the complete set of rules Myrissa actually registers. It is the language's surface, enumerated.
+
+**Prefix expressions:** `expr.integer`, `expr.float`, `expr.cstring`, `expr.cchar`, `expr.wstring`, `expr.nil`, `expr.bool`, `expr.ident`, `expr.self`, `expr.parent`, `expr.varargs`, `expr.not`, `expr.negate`, `expr.unary_plus`, `expr.address_of`, `expr.grouped`, `expr.set_literal`, `expr.pointer_cast`, plus the intrinsics that parse to `expr.call` (`len`, `size`, `utf8`, `paramcount`, `paramstr`, `getmem`, `resizemem`, `exccode`, `excmsg`).
+
+**Infix expressions:** `expr.assign` (2, right), `expr.binary` (6 / 8 / 10 / 20 / 30), `expr.shl` and `expr.shr` (25), `expr.in` (10), `expr.call` (40), `expr.array_index` (45), `expr.field_access` (45), `expr.deref` (50).
+
+**Statements:**
+
+| Group | Rules |
+|-------|-------|
+| Module | `stmt.module`, `stmt.exported` |
+| Declarations | `stmt.var_block`, `stmt.const_block`, `stmt.type_block`, `stmt.routine_decl`, `stmt.method_decl` |
+| Blocks | `stmt.begin_block`, `stmt.expr`, `stmt.self_expr`, `stmt.parent_expr` |
+| Control flow | `stmt.if`, `stmt.while`, `stmt.for`, `stmt.repeat`, `stmt.match`, `stmt.return`, `stmt.leave`, `stmt.skip` |
+| Exceptions | `stmt.guard`, `stmt.raiseexception`, `stmt.raiseexceptioncode` |
+| Memory | `stmt.create`, `stmt.destroy`, `stmt.getmem`, `stmt.freemem`, `stmt.resizemem`, `stmt.setlength` |
+| Output | `stmt.print`, `stmt.println` |
+| Testing | `stmt.test_block`, `stmt.testassert`, `stmt.testasserttrue`, `stmt.testassertfalse`, `stmt.testassertnil`, `stmt.testassertnotnil`, `stmt.testfail`, `stmt.testassertequalint`, `stmt.testassertequaluint`, `stmt.testassertequalfloat`, `stmt.testassertequalstr`, `stmt.testassertequalbool`, `stmt.testassertequalptr` |
+| Directives | `stmt.directive_target`, `stmt.directive_optimize`, `stmt.directive_subsystem`, `stmt.directive_exeicon`, `stmt.directive_copydll`, `stmt.directive_linklibrary`, `stmt.directive_librarypath`, `stmt.directive_modulepath`, `stmt.directive_includepath`, `stmt.directive_breakpoint`, `stmt.directive_message`, `stmt.directive_unittestmode`, `stmt.directive_addverinfo`, `stmt.directive_vimajor`, `stmt.directive_viminor`, `stmt.directive_vipatch`, `stmt.directive_viproductname`, `stmt.directive_videscription`, `stmt.directive_vifilename`, `stmt.directive_vicompanyname`, `stmt.directive_vicopyright` |
+
+> [!NOTE]
+> 🖨️ There is no `writeln`. Myrissa's output statements are `print` and `println`, which lower to `std::print` and `std::println`.
+
+<a id="mld-semantics"></a>
+
+### 🧠 Semantics Block
+
+The `semantics {}` block decides whether a syntactically valid program is *meaningful*. Handlers walk the AST, push and pop scopes, declare and look up symbols, and raise diagnostics. An `on` handler fires once per node of the matching kind.
+
+#### Declarative Vocabulary
+
+| Syntax | Description |
+|--------|-------------|
+| `scope "name" { ... }` | Push a named scope, run the body, pop it |
+| `scope @attr { ... }` | Push a scope named by an attribute's value |
+| `declare @attr as variable;` | Declare a symbol as a variable |
+| `declare @attr as routine;` | Declare a symbol as a routine |
+| `declare @attr as type;` | Declare a symbol as a type |
+| `declare @attr as constant;` | Declare a symbol as a constant |
+| `declare @attr as parameter;` | Declare a symbol as a parameter |
+| `declare @attr as KIND typed @type;` | Declare with type information attached |
+| `visit children;` | Visit every child of the current node |
+| `visit @attr;` | Visit the child named by an attribute |
+| `visit child[N];` | Visit the child at index N |
+| `lookup @attr -> let sym;` | Look a symbol up and bind it to a variable |
+| `lookup @attr or { ... };` | Look a symbol up; run the block if it is not found |
+
+#### Basic Handlers
+
+```mld
+semantics {
+  on program.root {
+    scope "global" {
+      visit children;
+    }
+  }
+
+  // Module: the module kind decides the build mode.
+  on stmt.module {
+    let kind = getAttr(node, "module.kind");
+    if kind == "exe" { setBuildMode("exe"); }
+    else if kind == "lib" { setBuildMode("lib"); }
+    else if kind == "dll" { setBuildMode("dll"); }
+
+    let mname = getAttr(node, "module.name");
+    setAttr(node, "mname", mname);
+    scope @mname {
+      visit children;
+    }
+  }
+
+  // Variable declaration.
+  on stmt.var_decl {
+    setAttr(node, "vname", getAttr(node, "var.name"));
+    setAttr(node, "vtype", getAttr(node, "var.type_text"));
+    declare @vname as variable typed @vtype;
+    visit children;
+  }
+
+  on expr.assign { visit children; }
+  on expr.call   { visit children; }
+  on expr.binary { visit children; }
+  on expr.ident  { }
+}
+```
+
+#### Imports Trigger Compilation
+
+An import is not a file-inclusion. The semantic handler *recursively compiles the imported module*, with the parent's build configuration saved and restored around it so the child cannot corrupt it.
+
+```mld
+semantics {
+  on stmt.import_item {
+    let iname = getAttr(node, "import.name");
+    setAttr(node, "iname", iname);
+    setAttr(node, "itype", "module");
+
+    pushBuildState();          // protect the parent's config
+    setModuleExtension("myra");
+    compileModule(iname);      // recursive compile
+    popBuildState();           // restore it
+
+    declare @iname as variable typed @itype;
+  }
+}
+```
+
+#### Overload Detection and Linkage Demotion
+
+C has no name mangling, so a `clink` routine cannot be overloaded. When Myrissa sees a second routine with a name it already knows, it **demotes** the linkage to `cpplink` and warns, rather than emitting C++ that will not link.
+
+```mld
+semantics {
+  on stmt.routine_decl {
+    let rname = getAttr(node, "decl.name");
+
+    // Build a signature key: "Name(type1,type2)"
+    let sig = rname + "(";
+    let first = true;
+    let pi = 0;
+    while pi < child_count() {
+      let pch = getChild(node, pi);
+      if nodeKind(pch) == "stmt.param_decl" {
+        if not first { sig = sig + ","; }
+        sig = sig + getAttr(pch, "param.type_text");
+        first = false;
+      }
+      pi = pi + 1;
+    }
+    sig = sig + ")";
+
+    // If this name already exists, every version of it must be C++-linked.
+    if symbolExistsWithPrefix(rname + "(") {
+      demoteCLinkageForPrefix(rname + "(");
+      warning("clink demoted to cpplink for previously declared overload(s) of '" + rname + "'");
+    }
+    if getAttr(node, "decl.linkage") == "clink" {
+      setAttr(node, "decl.linkage", "cpplink");
+      warning("clink demoted to cpplink for overloaded routine '" + rname + "'");
+    }
+
+    setAttr(node, "sig", sig);
+    declare @sig as routine;
+    scope @rname {
+      visit children;
+    }
+  }
+}
+```
+
+#### Multi-Pass Semantics
+
+Forward references need more than one walk. A `pass` block scopes a set of handlers to a single pass. Each pass walks the whole AST with only that pass's handlers active. The **scope tree persists** across passes; the scope *stack* resets to the root between them. So pass 1 can declare every routine, and pass 2 can resolve calls to routines declared later in the file.
+
+```mld
+semantics {
+  pass 1 "declarations" {
+    on stmt.routine_decl {
+      declare @name as routine;
+    }
+  }
+
+  pass 2 "analysis" {
+    on expr.ident {
+      lookup @name or {
+        error "undefined identifier '{@name}'";
+      };
+    }
+  }
+}
+```
+
+#### What Myrissa's Semantic Layer Actually Does
+
+| Feature | Mechanism |
+|---------|-----------|
+| **Overload detection** | Builds a `Name(type,type)` signature key and checks for an existing name prefix; demotes `clink` to `cpplink` when a collision is found. |
+| **Module compilation** | `stmt.import_item` calls `compileModule()` between `pushBuildState()` / `popBuildState()`. |
+| **Pointer access detection** | `expr.field_access` tests whether the left side is a pointer (directly, through a type alias, or through a call's return type) and stamps `pointer_access = "true"` so the emitter writes `->` instead of `.`. This is why Myrissa source uses a plain `.` through a pointer. |
+| **Float literal stamping** | `expr.assign` propagates the target type down into float literals on the right-hand side, so overload resolution picks the right one. |
+| **Variadic call detection** | `expr.call` looks for a `__va:` marker symbol and stamps the call as variadic. |
+
+<a id="mld-emitters"></a>
+
+### ⚙️ Emitters Block
+
+The `emitters {}` block produces the IR/native. Two kinds of handler:
+
+- **Statement emitters** write lines with `emitLine()`.
+- **Expression emitters** produce a string fragment with `emit`, which composes recursively through `exprToString()`.
+
+#### Statement Emitters
+
+```mld
+emitters {
+  on stmt.if {
+    let cond = exprToString(getChild(node, 0));
+    emitLine("if (" + cond + ") {");
+    indentIn();
+    emitNode(getChild(node, 1));         // then branch
+    indentOut();
+    if child_count() > 2 {
+      emitLine("} else {");
+      indentIn();
+      emitNode(getChild(node, 2));       // else branch
+      indentOut();
+    }
+    emitLine("}");
+  }
+
+  on stmt.while {
+    let cond = exprToString(getChild(node, 0));
+    emitLine("while (" + cond + ") {");
+    indentIn();
+    let wi = 1;
+    while wi < child_count() {
+      emitNode(getChild(node, wi));
+      wi = wi + 1;
+    }
+    indentOut();
+    emitLine("}");
+  }
+
+  on stmt.for {
+    let varName    = getAttr(node, "for.var");
+    let startExpr  = exprToString(getChild(node, 0));
+    let finishExpr = exprToString(getChild(node, 1));
+    let dir        = getAttr(node, "for.dir");
+
+    if dir == "to" {
+      emitLine("for (auto " + varName + " = " + startExpr +
+               "; " + varName + " <= " + finishExpr +
+               "; ++" + varName + ") {");
+    } else {
+      emitLine("for (auto " + varName + " = " + startExpr +
+               "; " + varName + " >= " + finishExpr +
+               "; --" + varName + ") {");
+    }
+    indentIn();
+    // body children
+    indentOut();
+    emitLine("}");
+  }
+
+  on stmt.println {
+    // lowers to std::println(...)
+    emitLine("std::println(" + args + ");");
+  }
+}
+```
+
+#### Expression Emitters
+
+`emit` hands a fragment back to whoever called `exprToString()`. This is where Myrissa's operator words become C++ symbols.
+
+```mld
+emitters {
+  on expr.binary {
+    let lhs = exprToString(getChild(node, 0));
+    let rhs = exprToString(getChild(node, 1));
+    let op  = getAttr(node, "operator");
+
+    if      op == "="   { op = "=="; }
+    else if op == "<>"  { op = "!="; }
+    else if op == "div" { op = "/";  }
+    else if op == "mod" { op = "%";  }
+    else if op == "and" { op = "&&"; }
+    else if op == "or"  { op = "||"; }
+    else if op == "xor" { op = "^";  }
+
+    emit "(" + lhs + " " + op + " " + rhs + ")";
+  }
+
+  on expr.assign {
+    let lhs = exprToString(getChild(node, 0));
+    let rhs = exprToString(getChild(node, 1));
+    let op  = getAttr(node, "operator");
+    if op == ":=" { op = "="; }
+    emit lhs + " " + op + " " + rhs;
+  }
+
+  on expr.ident   { emit @name; }
+  on expr.integer { emit @value; }
+  on expr.nil     { emit "nullptr"; }
+  on expr.self    { emit "this"; }
+  on expr.parent  { emit "Super"; }
+  on expr.cstring { emit "\"" + @value + "\""; }
+  on expr.wstring { emit "L\"" + @value + "\""; }
+
+  on expr.bool {
+    let val = getAttr(node, "value");
+    if val == "true" { emit "true"; } else { emit "false"; }
+  }
+}
+```
+
+Myrissa's `mod` becomes C++'s `%`, and `nil` becomes `nullptr`, because a line of editable text says so. Nothing is compiled into the compiler.
+
+#### Header vs Source Emission
+
+The emitter keeps two output buffers. Source is the default; pass `"header"` as a second argument to write to the header file instead. This is how `lib` and `dll` modules get a usable `.h`.
+
+```mld
+emitters {
+  on stmt.module {
+    emitLine("#include <cstdint>", "header");
+    emitLine("#include <string>",  "header");
+
+    emitLine("#include <cstdint>");
+    emitLine("#include <string>");
+  }
+}
+```
+
+#### Directive Emitters
+
+Directive emitters are the bridge from source-level `@directives` to the build pipeline. Each is a one-liner that forwards to a pipeline builtin.
+
+```mld
+emitters {
+  on stmt.directive_optimize    { setOptimize(getAttr(node, "value")); }
+  on stmt.directive_subsystem   { setSubsystem(getAttr(node, "value")); }
+  on stmt.directive_exeicon     { setExeIcon(getAttr(node, "value")); }
+  on stmt.directive_copydll     { addCopyDLL(getAttr(node, "value")); }
+  on stmt.directive_linklibrary { addLinkLibrary(getAttr(node, "value")); }
+  on stmt.directive_breakpoint  {
+    addBreakpoint(getNodeFile(node), getNodeLine(node));
+  }
+}
+```
+
+`@target` is the interesting one. The six target aliases are **not** defined in the langdef; they live in the Delphi host, and the langdef reaches them through the `setTargetAlias()` builtin, which returns false for a name it does not recognize.
+
+```mld
+// myrissa_utils.mld
+routine applyTarget(tr: string) -> bool {
+  if not setTargetAlias(tr) {
+    return false;      // caller raises a located error
+  }
+  return true;
+}
+```
+
+> [!IMPORTANT]
+> 🎯 Target resolution lives where the toolchain is driven from, not in the langdef. The alias vocabulary (`win64`, `winarm64`, `linux64`, `linuxarm64`, `macos64`, `wasm32`) is owned by `Myrissa.Build`. `setTargetAlias` is the only door between them.
+
+#### Node Walking
+
+| Function | Description |
+|----------|-------------|
+| `emitNode(node)` | Dispatch the emitter handler registered for that node's kind |
+| `emitChildren(node)` | Emit every child in sequence |
+| `exprToString(node)` | Render an expression subtree to a string |
+
+`exprToString` resolves in three steps: if an emitter handler exists for the node's kind, it runs in **string-capture mode**, intercepting `emit` calls instead of writing them out. Otherwise, if the node has exactly two children and an `@operator` attribute, it produces `left op right`. Failing both, the engine's default takes over.
+
+#### Myrissa's Emission Order
+
+The module emitter runs a fixed sequence, and the order is load-bearing.
+
+1. **Preprocessor directives and raw C++ statements** first, before any namespace opens.
+2. **Import includes** (`#include "module.h"`).
+3. For a `lib` module, the **namespace wrapper** opens.
+4. **Declarations**: types, constants, variables, routines.
+5. **Test block functions**, which must precede `main` so they are forward-declared by the time it calls them.
+6. **Module body** (`main`) last.
+
+The `stmt.exported` handler runs alongside this, writing forward declarations into the header: routine signatures, `extern` variable declarations, and type and constant definitions.
+
+<a id="mld-imperative"></a>
+
+### 🔁 The Imperative Language
+
+MLD is **Turing complete**. Handler bodies are not declarations, they are code. Variables, unbounded loops, conditionals, recursion, string operations, and error handling are all first-class, and they mix freely with the declarative forms in the same body.
+
+#### Variables and Assignment
+
+```mld
+let x    = 42;
+let name = "hello";
+let ok   = true;
+let n    = createNode("my_node");
+
+x    = x + 1;
+name = upper(name);
+```
+
+Variables are block-scoped. The interpreter keeps a stack of scope frames.
+
+#### Control Flow
+
+```mld
+// if / else if / else
+if x > 10 {
+  emitLine("big");
+} else if x > 5 {
+  emitLine("medium");
+} else {
+  emitLine("small");
+}
+
+// while
+let i = 0;
+while i < child_count() {
+  emitNode(getChild(node, i));
+  i = i + 1;
+}
+
+// for X in N  -- iterates 0 .. N-1; the loop variable is declared for you
+for i in child_count() {
+  emitNode(getChild(node, i));
+}
+
+// match, with multiple patterns per arm
+match getAttr(node, "module.kind") {
+  "exe" => {
+    setBuildMode("exe");
+  }
+  "dll" | "lib" => {
+    setBuildMode(getAttr(node, "module.kind"));
+  }
+  else => {
+    error "unknown module kind";
+  }
+}
+
+// guard: run the block only if the condition holds
+guard getAttr(node, "has_init") == "true" {
+  emit " = ";
+  emitNode(getChild(node, 0));
+}
+
+// return
+routine max(a: int, b: int) -> int {
+  if a > b { return a; }
+  return b;
+}
+```
+
+#### Operators
+
+| Category | Operators |
+|----------|-----------|
+| Arithmetic | `+`, `-`, `*`, `/`, `%` |
+| Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=` |
+| Logical | `and`, `or`, `not` (both short-circuit) |
+| String concatenation | `+` (overloaded) |
+
+#### Operator Precedence (MLD's Own Expressions)
+
+Not to be confused with the binding powers you *define* for the target language. These govern expressions inside handler bodies.
+
+| Precedence | Operators | Associativity |
+|------------|-----------|---------------|
+| 1 (highest) | `not`, unary `-` | Right |
+| 2 | `*`, `/`, `%` | Left |
+| 3 | `+`, `-` | Left |
+| 4 | `==`, `!=`, `<`, `>`, `<=`, `>=` | Left |
+| 5 | `and` | Left (short-circuit) |
+| 6 (lowest) | `or` | Left (short-circuit) |
+
+#### Attribute Access
+
+`@name` reads and writes attributes on the **current context node**: the result node in a grammar rule, the visited node in a semantic or emitter handler.
+
+```mld
+grammar {
+  rule stmt.module {
+    expect keyword.module;
+    consume identifier -> @name;      // writes @name on the result node
+  }
+}
+
+emitters {
+  on stmt.module {
+    emitLine("// Module: " + @name);  // reads @name from the current node
+  }
+}
+```
+
+#### String Interpolation
+
+Inside a double-quoted string:
+
+- `{@attr}` reads an attribute from the current node
+- `{expr}` evaluates an expression
+- `\{` emits a literal `{`
+
+```mld
+error "undefined identifier '{@name}'";
+emitLine("// child count: {child_count()}");
+```
+
+#### Triple-Quoted Strings
+
+`"""` opens a multi-line literal. Leading whitespace is trimmed to the minimum common indent. No escape processing.
+
+#### Try / Recover
+
+If any statement inside `try` fails, control jumps to `recover`. This is how an emitter degrades gracefully instead of taking the compiler down.
+
+```mld
+try {
+  let lhs = exprToString(getChild(node, 0));
+  emit lhs;
+} recover {
+  error "malformed expression";
+  emit "/* ERROR */";
+}
+```
+
+#### Implicit Variables
+
+| Variable | Available In | Meaning |
+|----------|--------------|---------|
+| `node` | Every handler | The current AST node |
+| `true`, `false` | Everywhere | Boolean literals |
+| `nil` | Everywhere | The null value |
+
+#### Diagnostics
+
+Every diagnostic carries the source location of the current node, and every message supports interpolation.
+
+| Builtin | Severity |
+|---------|----------|
+| `error(msg)` | Compilation error |
+| `errorAt(node, msg)` | Error located at a specific node |
+| `warning(msg)` | Warning |
+| `hint(msg)` | Suggestion |
+| `note(msg)` | Informational |
+| `info(msg)` | General information |
+
+Both the call form and the statement form parse:
+
+```mld
+error("undefined identifier '" + nm + "'");
+error "undefined identifier '{@name}'";
+```
+
+<a id="mld-routines"></a>
+
+### 🧩 Routines, Constants, and Enums
+
+#### User-Defined Routines
+
+Routines are declared at the **top level**, outside any block, and are callable from any grammar, semantic, or emitter handler. They recurse. When called from an emitter context, a routine inherits the emitter's output builder, so it can call `emitLine()` and `indentIn()` directly.
+
+**Syntax:** `routine name(p1: type, p2: type) -> returnType { ... }`
+
+**Parameter and return types:** `string`, `int`, `bool`, `node`, `list`.
+
+```mld
+routine resolveType(typeText: string) -> string {
+  if typeText == "int8"  { return "int8_t";  }
+  if typeText == "int32" { return "int32_t"; }
+
+  if startsWith(typeText, "array of ") {
+    return "std::vector<" + resolveType(substr(typeText, 9, len(typeText) - 9)) + ">";
+  }
+  if startsWith(typeText, "pointer to ") {
+    return resolveType(substr(typeText, 11, len(typeText) - 11)) + "*";
+  }
+  if contains(typeText, ".") {
+    return replace(typeText, ".", "::");
+  }
+  return typeText;
+}
+
+routine emitBlock(blk: node) {
+  let i = 0;
+  while i < child_count(blk) {
+    emitNode(getChild(blk, i));
+    i = i + 1;
+  }
+}
+```
+
+#### Myrissa's Helper Routines
+
+Defined in `myrissa_helpers.mld` and `myrissa_utils.mld`. These are the shared machinery the rest of the definition leans on.
+
+| Routine | Returns | Purpose |
+|---------|---------|---------|
+| `resolveType(typeText)` | string | Map a Myrissa type name to a C++ type, including compound types |
+| `collectTypeText()` | string | Collect a compound type's text from the token stream |
+| `buildRoutineSig(nd, rname, retType)` | string | Build a C++ function signature from a routine declaration |
+| `parseCallArgs(nd)` | - | Parse a `( expr, expr, ... )` argument list |
+| `isDirectiveToken()` | bool | Is the current token a directive? |
+| `emitBlock(blk)` | - | Walk a node's children and emit each |
+| `emitArrayVarDecl(name, type)` | - | Emit an array variable declaration |
+| `emitPointerVarDecl(name, type)` | - | Emit a pointer variable declaration |
+| `emitRoutineForwardDecl(ch)` | - | Emit a routine forward declaration to the header |
+| `emitExportedVarForwardDecls(blk)` | - | Emit `extern` declarations to the header |
+| `emitExportedTypeToHeader(td)` | - | Emit a type declaration to the header |
+| `emitExportedConstToHeader(cd)` | - | Emit a const declaration to the header |
+| `stampFloatLiterals(n, targetType)` | - | Recursively stamp float literals with a resolved type |
+| `applyTarget(tr)` | bool | Resolve a target alias through `setTargetAlias()` |
+
+#### Constants
+
+Constants must be declared before anything references them.
+
+```mld
+const {
+  MAX_PARAMS       = 255;
+  DEFAULT_ALIGN    = 8;
+  ENABLE_OVERLOADS = true;
+}
+```
+
+#### Enums
+
+Members become global constants with sequential integer values starting at 0.
+
+```mld
+enum BuildMode { exe, lib, dll }
+```
+
+<a id="mld-fragments"></a>
+
+### 📦 Fragments, Imports, and Guards
+
+#### Fragments
+
+A `fragment` is a named, reusable block of top-level declarations, expanded with `include`. Fragments are an organizational tool *within* a file.
+
+```mld
+fragment common_operators {
+  token op.plus  = "+";
+  token op.minus = "-";
+  token op.star  = "*";
+  token op.slash = "/";
+}
+
+tokens {
+  include common_operators;
+}
+```
+
+#### Imports
+
+`import` loads an external `.mld` file. Paths resolve relative to the importing file, and **each path is processed only once**, so a diamond of imports is safe.
+
+```mld
+import "myrissa_tokens.mld";
+import "myrissa_utils.mld";
+import "myrissa_helpers.mld";
+import "myrissa_grammar.mld";
+import "myrissa_semantics.mld";
+import "myrissa_emitters.mld";
+```
+
+#### Top-Level Guards
+
+A `guard` includes or excludes declarations based on a constant. This is how a language feature is switched off at definition time rather than at runtime.
+
+```mld
+const {
+  FEATURE_GENERICS = false;
+}
+
+tokens {
+  guard FEATURE_GENERICS {
+    token keyword.generic = "generic";
+  }
+}
+```
+
+With `FEATURE_GENERICS = false`, the word `generic` is not a keyword. It lexes as an ordinary identifier.
+
+<a id="mld-builtins"></a>
+
+### 🛠️ Built-in Function Reference
+
+Every builtin the engine exposes, grouped by the context it is available in. Builtins in **Common** work everywhere; the rest are only meaningful in their own phase.
+
+#### Common: Node Operations
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `nodeKind(node)` | string | The node's kind string |
+| `getAttr(node, key)` | string | Read an attribute from a node |
+| `getAttr(key)` | string | Read an attribute from the current context node |
+| `setAttr(node, key, value)` | - | Write an attribute onto a node |
+| `setAttr(key, value)` | - | Write an attribute onto the current context node |
+| `has_attr(name)` | bool | Does the current node carry this attribute? |
+| `getChild(node, index)` | node | Child at a zero-based index |
+| `childCount(node)` | int | Number of children of a node |
+| `child_count()` | int | Number of children of the current context node |
+| `child_count(node)` | int | Number of children of a node |
+| `createNode("kind")` | node | Create a new AST node |
+| `setKind(node, "kind")` | - | Change a node's kind |
+| `cloneNode(node)` | node | Deep-copy a node |
+| `addChild(parent, child)` | - | Append a child |
+| `setChild(parent, i, child)` | - | Replace the child at index `i` |
+| `removeChild(parent, i)` | - | Remove the child at index `i` |
+| `getResultNode()` | node | The rule's result node (grammar context) |
+| `setShared(key, value)` | - | Write to the cross-handler shared store |
+| `getShared(key)` | string | Read from the cross-handler shared store |
+| `getNodeFile(node)` | string | Source file a node came from |
+| `getNodeLine(node)` | int | Source line a node came from |
+
+#### Common: String Operations
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `concat(a, b, ...)` | string | Concatenate (also spelled `a + b`) |
+| `upper(s)` | string | Upper case |
+| `lower(s)` | string | Lower case |
+| `trim(s)` | string | Strip leading and trailing whitespace |
+| `replace(s, find, repl)` | string | Replace every occurrence |
+| `len(s)` | int | Length |
+| `substr(s, start, count)` | string | Substring, zero-based start |
+| `startsWith(s, prefix)` | bool | Prefix test |
+| `endsWith(s, suffix)` | bool | Suffix test |
+| `contains(s, sub)` | bool | Containment test |
+| `intToStr(n)` | string | Integer to string |
+| `strToInt(s)` | int | String to integer (0 on failure) |
+| `fmtEscape(s)` | string | Escape a string for safe embedding in emitted C++ |
+
+#### Common: Diagnostics
+
+| Function | Description |
+|----------|-------------|
+| `error(msg)` | Raise a compilation error at the current node |
+| `errorAt(node, msg)` | Raise an error located at a specific node |
+| `warning(msg)` | Raise a warning |
+| `hint(msg)` / `note(msg)` / `info(msg)` | Lower-severity diagnostics |
+
+#### Parse Context
+
+Available inside `grammar { rule ... { } }` bodies.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `checkToken("kind")` | bool | Is the current token this kind? Does **not** consume. |
+| `matchToken("kind")` | bool | If the current token is this kind, consume it and return true |
+| `requireToken("kind")` | - | Assert the current token is this kind and consume it; error if not |
+| `advance()` | string | Consume the current token, return its text |
+| `currentText()` | string | Text of the current token |
+| `currentKind()` | string | Kind of the current token |
+| `peekKind()` | string | Kind of the next token (one-token lookahead) |
+| `peekKindAt(n)` | string | Kind of the token `n` positions ahead |
+| `parseExpr(power)` | node | Parse an expression with a minimum binding power |
+| `parseExprFrom(node, power)` | node | Continue parsing an expression from an existing left node |
+| `parseStmt()` | node | Parse the next statement |
+| `collectUntil(kind)` | string | Collect raw text until a token kind is reached |
+| `collectRaw()` | string | Collect raw text until delimiters balance |
+
+#### Semantic Context
+
+Available inside `semantics { on ... { } }` handlers, alongside the declarative `declare`, `lookup`, `scope`, and `visit` forms.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `symbolExistsWithPrefix(prefix)` | bool | Does any symbol start with this prefix? |
+| `demoteCLinkageForPrefix(prefix)` | int | Strip `clink` from every matching symbol; returns the count |
+| `lookupSymbolType(name)` | string | Look up a symbol's type string |
+| `compileModule(name)` | bool | Recursively compile a module |
+| `setModuleExtension(ext)` | - | File extension used to resolve modules |
+| `addModulePath(path)` | - | Add a module search directory |
+| `getModulePaths()` | string | The current module search paths |
+| `clearModulePaths()` | - | Clear the module search paths |
+
+#### Emit Context: Low-Level Output
+
+| Function | Description |
+|----------|-------------|
+| `emitLine(text)` | Write an indented line to the source buffer |
+| `emitLine(text, "header")` | Write to the header buffer instead |
+| `emit expr;` | Produce an expression fragment (expression emitters) |
+| `emit @attr;` | Produce an attribute's value as a fragment |
+| `blankLine()` | Write an empty line |
+| `indentIn()` | Increase the indent level |
+| `indentOut()` | Decrease the indent level |
+| `include(path)` | Emit an `#include` |
+
+#### Emit Context: Function Builder
+
+| Function | C++ Produced |
+|----------|--------------|
+| `func(name, returnType)` | `returnType name(` ... `) {` |
+| `param(name, type)` | Adds a parameter to the function being built |
+| `endFunc()` | `}` |
+
+#### Emit Context: Declarations and Statements
+
+| Function | C++ Produced |
+|----------|--------------|
+| `declVar(name, type)` | `type name;` |
+| `declVar(name, type, init)` | `type name = init;` |
+| `assign(lhs, rhs)` | `lhs = rhs;` |
+| `stmt(text)` | `text;` |
+| `returnVal(expr)` | `return expr;` |
+| `returnVoid()` | `return;` |
+| `ifStmt(cond)` | `if (cond) {` |
+| `elseIfStmt(cond)` | `} else if (cond) {` |
+| `elseStmt()` | `} else {` |
+| `endIf()` | `}` |
+| `whileStmt(cond)` | `while (cond) {` |
+| `endWhile()` | `}` |
+| `forStmt(var, init, cond, step)` | `for (auto var = init; cond; step) {` |
+| `endFor()` | `}` |
+| `breakStmt()` | `break;` |
+| `continueStmt()` | `continue;` |
+
+#### Emit Context: Types and Node Walking
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `typeTextToKind(text)` | string | Resolve source type text to an internal type kind |
+| `typeToIR(kind)` | string | Resolve an internal type kind to a C++ type |
+| `exprToString(node)` | string | Render an expression subtree to a string |
+| `emitNode(node)` | - | Dispatch the emitter handler for a node |
+| `emitChildren(node)` | - | Emit every child in sequence |
+
+#### Pipeline: Build Configuration
+
+| Function | Accepted Values | Description |
+|----------|-----------------|-------------|
+| `setBuildMode(m)` | `"exe"`, `"lib"`, `"dll"` | Output kind |
+| `setTargetAlias(name)` | `win64`, `winarm64`, `linux64`, `linuxarm64`, `macos64`, `wasm32` | Resolve a target alias in the host. **Returns false** on an unknown name. |
+| `setPlatform(p)` | A native triple, e.g. `"x86_64-windows-gnu"` | Set the target triple directly |
+| `getPlatform()` | - | The current triple, e.g. to reject a construct a target cannot support |
+| `setOptimize(o)` | `"debug"`, `"releasesafe"`, `"releasefast"`, `"releasesmall"` | Optimization level |
+| `getOptimize()` | - | The current optimization level |
+| `setSubsystem(s)` | `"console"`, `"gui"` | Windows subsystem |
+| `setLineDirectives(b)` | bool | Emit `#line` directives into the generated C++ |
+
+> [!TIP]
+> 💡 `getPlatform()` is how the langdef refuses a construct on a target that cannot support it. It is exactly how `guard` / `except` becomes a hard compile error on `wasm32`, where C++ exceptions are impossible.
+
+#### Pipeline: Paths and Libraries
+
+| Function | Description |
+|----------|-------------|
+| `addIncludePath(path)` | Add a C++ include search path |
+| `addLibraryPath(path)` | Add a library search path |
+| `addLinkLibrary(name)` | Link against a library |
+| `addCopyDLL(path)` | Copy a DLL to the output directory |
+| `setModuleExtension(ext)` | File extension used to resolve modules |
+| `addModulePath(path)` | Add a module search directory |
+
+#### Pipeline: Build State
+
+Save and restore the whole build configuration. This is what lets an imported module set its own include paths and link libraries without corrupting its parent's.
+
+| Function | Description |
+|----------|-------------|
+| `pushBuildState()` | Push the current build configuration onto a stack |
+| `popBuildState()` | Restore the most recently pushed configuration |
+
+#### Pipeline: Conditional Compilation
+
+These drive the `@ifdef` symbol table, not the C++ preprocessor.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `setDefine(name)` | - | Define a symbol |
+| `setDefine(name, value)` | - | Define a symbol with a value |
+| `removeDefine(name)` | - | Remove a defined symbol |
+| `hasDefine(name)` | bool | Is this symbol defined? |
+| `clearDefines()` | - | Remove every defined symbol |
+| `unsetDefine(name)` | - | Explicitly mark a symbol as undefined |
+| `removeUndefine(name)` | - | Remove an explicit undefine |
+| `hasUndefine(name)` | bool | Is this symbol explicitly undefined? |
+| `clearUndefines()` | - | Clear every explicit undefine |
+
+#### Pipeline: Version Info
+
+| Function | Description |
+|----------|-------------|
+| `setAddVerInfo(v)` | Enable the version resource |
+| `setExeIcon(path)` | Embed an icon into the executable |
+| `setVersionMajor(v)` / `setVersionMinor(v)` / `setVersionPatch(v)` | Version numbers |
+| `setProductName(v)` | Product name |
+| `setDescription(v)` / `setFileDescription(v)` | File description |
+| `setFilename(v)` / `setVIFilename(v)` | Original filename |
+| `setCompanyName(v)` | Company name |
+| `setCopyright(v)` / `setLegalCopyright(v)` | Copyright string |
+
+#### Pipeline: Debug
+
+| Function | Description |
+|----------|-------------|
+| `addBreakpoint(file, line)` | Record a breakpoint entry in the `.mbp` sidecar |
+
+<a id="mld-ebnf"></a>
+
+### 🧾 Formal Grammar (EBNF)
+
+The complete EBNF for the MLD meta-language itself. Brackets `[ ]` denote optionality, braces `{ }` denote zero-or-more repetition, parentheses `( )` group, and `|` separates alternatives.
+
+#### Lexical Elements
+
+```ebnf
+letter       = "A" | ... | "Z" | "a" | ... | "z" | "_" .
+digit        = "0" | ... | "9" .
+ident        = letter { letter | digit } .
+integer      = digit { digit } .
+string       = '"' { character | escapeSeq } '"' .
+tripleString = '"""' { character } '"""' .
+escapeSeq    = "\" ( "n" | "t" | "r" | "0" | "\" | '"' ) .
+comment      = "//" { character } newline .
+blockComment = "/*" { character } "*/" .
+```
+
+#### Reserved Words
+
+The meta-language is **case-sensitive** for all keywords and identifiers.
+
+| Category | Words |
+|----------|-------|
+| Structure | `language`, `version`, `tokens`, `types`, `grammar`, `semantics`, `emitters`, `section` |
+| Rules | `rule`, `on`, `token`, `optional`, `expect`, `consume`, `parse`, `many`, `until`, `sync`, `precedence`, `left`, `right` |
+| Declarations | `let`, `const`, `enum`, `routine`, `fragment`, `import`, `include` |
+| Control flow | `if`, `else`, `while`, `for`, `in`, `break`, `continue`, `return`, `match`, `guard`, `try`, `recover` |
+| Semantics | `declare`, `lookup`, `scope`, `visit`, `children`, `child`, `parent`, `as`, `typed`, `where`, `pass` |
+| Emission | `emit`, `to`, `indent`, `before`, `after`, `node` |
+| Diagnostics | `error`, `warning`, `hint`, `note`, `info` |
+| Literals | `true`, `false`, `nil` |
+| Logic | `and`, `or`, `not` |
+
+#### Built-in Types
+
+```
+string   text values
+int      integer values
+bool     boolean values
+node     AST node reference
+list     ordered collection
+```
+
+#### Operators and Delimiters
+
+```
++    -    *    /    %
+==   !=   <    >    <=   >=
+=    ;    ,    .    :    @
+(    )    [    ]    {    }
+->   =>   |
+```
+
+#### Top-Level Structure
+
+```ebnf
+SourceFile     = LanguageDecl { TopLevelBlock } .
+LanguageDecl   = "language" ident "version" string ";" .
+TopLevelBlock  = TokenBlock | TypesBlock | GrammarBlock | SemanticsBlock
+               | EmitterBlock | ConstBlock | EnumDecl | RoutineDecl
+               | FragmentDecl | ImportStmt | IncludeStmt | GuardBlock .
+```
+
+#### Token Declarations
+
+```ebnf
+TokenBlock     = "tokens" "{" { TokenDecl | TokenConfig | GuardBlock | IncludeStmt } "}" .
+TokenDecl      = "token" TokenKind "=" string [ TokenFlags ] ";" .
+TokenKind      = ident "." ident .
+TokenFlags     = "[" TokenFlag { "," TokenFlag } "]" .
+TokenFlag      = "noescape" | "close" string
+               | "define" | "undef" | "ifdef" | "ifndef"
+               | "elseif" | "else" | "endif" .
+TokenConfig    = CaseSensitiveDecl | IdentStartDecl | IdentPartDecl
+               | StructuralDecl | HexPrefixDecl | BinaryPrefixDecl
+               | DirectivePrefixDecl .
+CaseSensitiveDecl   = "casesensitive" "=" ( "true" | "false" ) ";" .
+StructuralDecl      = ( "terminator" | "block_open" | "block_close" ) "=" TokenKind ";" .
+HexPrefixDecl       = "hex_prefix" "=" string ";" .
+BinaryPrefixDecl    = "binary_prefix" "=" string ";" .
+DirectivePrefixDecl = "directive_prefix" "=" string ";" .
+```
+
+#### Type Declarations
+
+```ebnf
+TypesBlock     = "types" "{" { TypeDecl | IncludeStmt | GuardBlock } "}" .
+TypeDecl       = TypeKeywordDecl | TypeMappingDecl | LiteralTypeDecl
+               | TypeCompatDecl | DeclKindDecl | CallKindDecl
+               | CallNameAttrDecl .
+TypeKeywordDecl  = "type" ident "=" string ";" .
+TypeMappingDecl  = "map" string "->" string ";" .
+LiteralTypeDecl  = "literal" string "=" string ";" .
+TypeCompatDecl   = "compatible" string "," string [ "->" string ] ";" .
+DeclKindDecl     = "decl_kind" string ";" .
+CallKindDecl     = "call_kind" string ";" .
+CallNameAttrDecl = "call_name_attr" "=" string ";" .
+```
+
+#### Grammar Rule Declarations
+
+```ebnf
+GrammarBlock   = "grammar" "{" { RuleDecl } "}" .
+RuleDecl       = "rule" NodeKind [ RuleModifiers ] "{" { RuleStmt } "}" .
+RuleModifiers  = "precedence" ( "left" | "right" ) integer .
+NodeKind       = ident "." ident .
+RuleStmt       = ExpectStmt | ConsumeStmt | ParseStmt | SetAttrStmt
+               | OptionalBlock | SyncDecl | HandlerStmt .
+ExpectStmt     = "expect" TokenRef ";" .
+ConsumeStmt    = "consume" TokenRef "->" "@" ident ";" .
+ParseStmt      = "parse" ( "expr" | "stmt" ) [ integer ] "->" "@" ident ";"
+               | "parse" "many" ( "expr" | "stmt" )
+                 [ "until" UntilSpec ] "->" "@" ident ";" .
+OptionalBlock  = "optional" "{" { RuleStmt } "}" .
+SyncDecl       = "sync" TokenKind ";" .
+TokenRef       = TokenKind | "[" TokenKind { "," TokenKind } "]" | "identifier" .
+```
+
+#### Semantic Handler Declarations
+
+```ebnf
+SemanticsBlock = "semantics" "{" { SemanticDecl | PassBlock } "}" .
+PassBlock      = "pass" integer string "{" { SemanticDecl } "}" .
+SemanticDecl   = "on" NodeKind "{" { SemanticStmt } "}" .
+SemanticStmt   = VisitStmt | DeclareStmt | LookupStmt | ScopeBlock | HandlerStmt .
+VisitStmt      = "visit" VisitTarget ";" .
+VisitTarget    = "children" | "@" ident | "child" "[" Expression "]" .
+DeclareStmt    = "declare" "@" ident "as" SymbolKind
+                 [ "typed" Expression ] [ WhereBlock ] ";" .
+SymbolKind     = "variable" | "routine" | "type" | "constant" | "parameter" .
+LookupStmt     = "lookup" "@" ident
+                 ( "->" "let" ident | "or" "{" { SemanticStmt } "}" ) ";" .
+ScopeBlock     = "scope" Expression "{" { SemanticStmt } "}" .
+```
+
+#### Emitter Handler Declarations
+
+```ebnf
+EmitterBlock   = "emitters" "{" { SectionDecl | EmitDecl | BeforeBlock | AfterBlock } "}" .
+SectionDecl    = "section" ident [ "indent" string ] ";" .
+EmitDecl       = "on" NodeKind "{" { EmitStmt } "}" .
+EmitStmt       = EmitToStmt | VisitStmt | IndentBlock | HandlerStmt .
+EmitToStmt     = "emit" [ "to" ident ":" ] Expression ";" .
+IndentBlock    = "indent" "{" { EmitStmt } "}" .
+```
+
+#### Expressions
+
+```ebnf
+Expression     = OrExpr .
+OrExpr         = AndExpr { "or" AndExpr } .
+AndExpr        = NotExpr { "and" NotExpr } .
+NotExpr        = [ "not" ] Comparison .
+Comparison     = Addition [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) Addition ] .
+Addition       = Term { ( "+" | "-" ) Term } .
+Term           = Factor { ( "*" | "/" | "%" ) Factor } .
+Factor         = AttrAccess | Ident | StringLiteral | IntLiteral
+               | BoolLiteral | "nil" | "(" Expression ")"
+               | FuncCall | InterpolatedString | TripleString .
+AttrAccess     = "@" ident .
+FuncCall       = ident "(" [ Expression { "," Expression } ] ")" .
+InterpolatedString = '"' { character | "{@" ident "}" | "{" Expression "}" } '"' .
+```
+
+#### Handler Body Logic
+
+```ebnf
+HandlerStmt    = LetStmt | AssignStmt | IfStmt | WhileStmt | ForStmt
+               | MatchStmt | GuardStmt | BreakStmt | ContinueStmt
+               | ReturnStmt | TryRecover | DiagStmt | FuncCallStmt | SetAttrStmt .
+LetStmt        = "let" ident "=" Expression ";" .
+AssignStmt     = ident "=" Expression ";" .
+IfStmt         = "if" Expression "{" { HandlerStmt } "}"
+                 { "else" "if" Expression "{" { HandlerStmt } "}" }
+                 [ "else" "{" { HandlerStmt } "}" ] .
+WhileStmt      = "while" Expression "{" { HandlerStmt } "}" .
+ForStmt        = "for" ident "in" Expression "{" { HandlerStmt } "}" .
+MatchStmt      = "match" Expression "{" { MatchArm } [ DefaultArm ] "}" .
+MatchArm       = Pattern "=>" "{" { HandlerStmt } "}" .
+DefaultArm     = "else" "=>" "{" { HandlerStmt } "}" .
+Pattern        = ( StringLiteral | IntLiteral | BoolLiteral )
+                 { "|" ( StringLiteral | IntLiteral | BoolLiteral ) } .
+GuardStmt      = "guard" Expression "{" { HandlerStmt } "}" .
+ReturnStmt     = "return" [ Expression ] ";" .
+TryRecover     = "try" "{" { HandlerStmt } "}" "recover" "{" { HandlerStmt } "}" .
+DiagStmt       = ( "error" | "warning" | "hint" | "note" | "info" ) Expression ";" .
+FuncCallStmt   = ident "(" [ Expression { "," Expression } ] ")" ";" .
+```
+
+#### Routines, Constants, Fragments, Imports
+
+```ebnf
+RoutineDecl    = "routine" ident "(" [ ParamList ] ")" [ "->" TypeName ]
+                 "{" { HandlerStmt } "}" .
+ParamList      = Param { "," Param } .
+Param          = ident ":" TypeName .
+TypeName       = "string" | "int" | "bool" | "node" | "list" .
+ConstBlock     = "const" "{" { ConstDecl } "}" .
+ConstDecl      = ident "=" Expression ";" .
+EnumDecl       = "enum" ident "{" ident { "," ident } "}" .
+FragmentDecl   = "fragment" ident "{" { TopLevelBlock } "}" .
+ImportStmt     = "import" string ";" .
+IncludeStmt    = "include" ident ";" .
+GuardBlock     = "guard" Expression "{" { TopLevelBlock | TokenDecl | TypeDecl } "}" .
+```
+
+#### Token Kind Naming Conventions
+
+| Category | Examples |
+|----------|----------|
+| `keyword.*` | `keyword.if`, `keyword.while`, `keyword.var` |
+| `op.*` | `op.plus`, `op.assign`, `op.neq` |
+| `delimiter.*` | `delimiter.lparen`, `delimiter.semicolon` |
+| `literal.*` | `literal.integer`, `literal.float`, `literal.hex` |
+| `string.*` | `string.cstring`, `string.wstring` |
+| `comment.*` | `comment.line`, `comment.block_open` |
+| `directive.*` | `directive.define`, `directive.optimize` |
+| `type.*` | `type.int32`, `type.string`, `type.boolean` |
+| `identifier` | bare, no dot |
+| `eof` | bare, no dot |
+
+#### Node Kind Naming Conventions
+
+| Category | Examples |
+|----------|----------|
+| `program.*` | `program.root` |
+| `stmt.*` | `stmt.if`, `stmt.var_decl`, `stmt.routine_decl`, `stmt.module` |
+| `expr.*` | `expr.ident`, `expr.call`, `expr.binary`, `expr.grouped` |
+
+`program.root` is the engine's root node kind. Every other node kind in the tree is one your `.mld` invented.
+
+### 🔨 Hacking Myrissa
+
+You do not rebuild the compiler to change the language. The `.mld` files are read at startup from `bin/res/language/`. Edit them in place and run the compiler again.
+
+| Goal | What to Change |
+|------|----------------|
+| **Rename a keyword** | One `token` line in `myrissa_tokens.mld`. |
+| **Add an operator** | Declare the token, add an infix `rule` with a binding power, add an `emitters` handler. |
+| **Change what C++ comes out** | Edit the emitter handler. Nothing else moves. |
+| **Add a statement** | Declare the keyword, write a `stmt.*` rule, add a semantic handler and an emitter. |
+| **Add a type** | A `type` line, a `map` line, and the `compatible` entries that let it coerce. |
+| **Switch a feature off** | Wrap its declarations in a top-level `guard` on a `const`. |
+
+> [!TIP]
+> 💡 The `.mld` files are the best documentation of Myrissa that exists, because they are not a description of the compiler. They **are** the compiler. When the prose and the `.mld` disagree, the `.mld` is right.
 
 <a id="tools"></a>
 
@@ -3338,9 +5448,9 @@ The generated binding module handles cross-platform DLL deployment itself. Its h
 module unit RayLib;
 
 @ifdef TARGET_WIN64
-  @copydll "res/libs/vendor/raylib/win64/raylib.dll";
+  @copydll "$P:res/libs/vendor/raylib/win64/raylib.dll";
 @elseif TARGET_LINUX64
-  @copydll "res/libs/vendor/raylib/linux64/libraylib.so.550";
+  @copydll "$P:res/libs/vendor/raylib/linux64/libraylib.so.550";
 @else
   @message error "RayLib: unsupported target";
 @endif
@@ -3356,8 +5466,8 @@ Every routine in the binding is declared as `external DLL_NAME;` -- one string c
 ```
 module exe demo_raylib;
 
-@libpath "res/libs/vendor/raylib";
-@libpath "res/libs/vendor/raylib/linux64";
+@libpath "$P:res/libs/vendor/raylib";
+@libpath "$P:res/libs/vendor/raylib/linux64";
 
 import
   RayLib;
@@ -3767,6 +5877,6 @@ Apache 2.0 is a permissive open source license that lets you use, modify, and di
 
 **💎 Myrissa Programming Language&trade;**
 
-Copyright &copy; 2026-present tinyBigGAMES&trade; LLC<br/>All Rights Reserved.
+Copyright &copy; 2025-present tinyBigGAMES&trade; LLC<br/>All Rights Reserved.
 
 </div>
