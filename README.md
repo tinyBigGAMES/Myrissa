@@ -24,7 +24,7 @@ Compile and run:
 myrc -s hello.myr -r
 ```
 
-Myrissa compiles ahead-of-time through a complete in-process pipeline: lexer, parser, AST, semantic analysis, SSA-based IR with optimization passes, x64 register allocation and instruction encoding, and PE or ELF linking with sections, imports, exports, and relocations. The entire toolchain runs in a single invocation on Windows -- the `@target win64|linux64;` directive selects the platform, and Linux binaries are cross-compiled without any Linux toolchain installed. There is nothing to install, configure, or depend on.
+Myrissa compiles ahead-of-time through a three-layer architecture. Layer 1 is a language-agnostic engine that reads `.mld` definition files at startup -- these plain-text files define the entire language: tokens, grammar, semantic rules, and code generation. Layer 2 is the native backend: SSA-based IR with optimization passes, x64 register allocation and instruction encoding, and PE or ELF linking with sections, imports, exports, and relocations. Layer 3 is the `.mld` files themselves -- change them and you change the language without recompiling the compiler. The entire toolchain runs in a single invocation on Windows -- the `@target win64|linux64;` directive selects the platform, and Linux binaries are cross-compiled without any Linux toolchain installed. There is nothing to install, configure, or depend on.
 
 The language takes its syntax philosophy from Pascal and Oberon: `begin..end` blocks, `:=` assignment, strong static typing, and a module system that keeps code organized. Case-sensitive, semicolon-delimited, and designed to be readable at a glance.
 
@@ -71,6 +71,8 @@ Myrissa is for developers who want native x64 output without fighting the toolch
 - **Conditional compilation**: `@define`, `@ifdef`, `@ifndef`, `@elseif`, `@else`, `@endif` with predefined platform and module-kind symbols (`TARGET_WIN64`, `TARGET_LINUX64`, `DEBUG`, `RELEASE`, and more) -- working in imported units too.
 - **Version info and icons**: Embed Windows version information and application icons into executables via directives. No post-build steps or resource compilers required.
 - **SSA optimization**: Mem2Reg, constant folding, and dead code elimination passes on the intermediate representation.
+- **Language defined by MLD files**: The entire language -- tokens, grammar, semantic rules, and code generation -- is defined in editable `.mld` plain-text files that the engine reads at startup. The compiler itself is a language-agnostic engine; Myrissa is one definition it runs. Change an `.mld` file and you change the language without recompiling the compiler.
+- **Official test suite**: 26 test files covering every major BNF section (literals, arithmetic, comparison, control flow, match, strings, wide strings, routines, constants, records, arrays, pointers, sets, choices, objects, overlays, guard/except, memory, intrinsics, variadics, conditional compilation, type casts, unsigned integers, routine types, and globals), all passing on both win64 and linux64.
 
 ## 🚀 Getting Started
 
@@ -176,7 +178,7 @@ The full language reference, BNF grammar, toolchain guide, API reference, and ho
 
 | Document | Description |
 |----------|-------------|
-| **[Myrissa Language Reference](https://github.com/tinyBigGAMES/Myrissa/blob/main/docs/Myrissa.md)** | Complete language tour with examples: types, routines, records, objects, choices, sets, overlays, arrays, strings, control flow, exceptions, memory management, pointers, variadics, modules, external declarations, DLL loading, conditional compilation, unit testing, directives, the full BNF grammar, toolchain usage, and the embeddable API reference. |
+| **[Myrissa Language Reference](https://github.com/tinyBigGAMES/Myrissa/blob/main/docs/Myrissa.md)** | Complete language tour with examples: types, routines, records, objects, choices, sets, overlays, arrays, strings, control flow, exceptions, memory management, pointers, variadics, modules, external declarations, DLL loading, conditional compilation, unit testing, directives, the full BNF grammar, MLD meta-language reference, toolchain usage, and the embeddable API reference. |
 
 
 ## 🔨 Getting Myrissa
