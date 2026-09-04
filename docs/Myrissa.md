@@ -1,19 +1,16 @@
 <div align="center">
 
-![Myrissa](../media/myrissa.png)
+![Myrissa](../media/logo.jpg)
 
 </div>
 
-<a id="what-is-myrissa"></a>
+<a id="overview"></a>
 
-## 💎 What is Myrissa?
+## Overview
 
-**Myrissa** is a zero-dependency native compiler for Windows x64 and Linux x64. It takes clean, statically-typed `.myr` source code and produces native executables, dynamic libraries, static libraries, or reusable unit modules for either platform without requiring MSVC, MinGW, GCC, an external linker, or a separate runtime.
+**Myrissa** is a zero-dependency native compiler backend written entirely in Delphi. You feed it source through a fluent API and it hands back a real, running binary -- exe, dll, or static lib -- for Windows x64 or Linux x64. No LLVM. No GCC. No external linker. No runtime you didn't write. Every byte in the output is accounted for by code that lives in this repository.
 
-Write a source file. Run `myrc`. Get native machine code.
-
-```
-// hello.myr
+```myr
 module exe hello;
 begin
   println("Hello, Myrissa!");
@@ -21,749 +18,716 @@ end.
 ```
 
 ```
-> myrc -s hello.myr -r
+> myr hello -r
 Hello, Myrissa!
 ```
-  
+
+### What It Does
+
+Myrissa takes `.myr` source through a full compiler pipeline and produces native binaries:
+
+```
+.myr source
+    |
+    v
++--------------------------------------------------+
+|  Myrissa Compiler                                |
+|                                                  |
+|  Lexer (tokenization)                            |
+|    |                                             |
+|    v                                             |
+|  Parser (recursive descent + Pratt expressions)  |
+|    |                                             |
+|    v                                             |
+|  AST (abstract syntax tree)                      |
+|    |                                             |
+|    v                                             |
+|  Semantic Analysis                               |
+|    (type resolution, symbol binding,             |
+|     AST enrichment, directive processing)        |
+|    |                                             |
+|    v                                             |
+|  SSA-based IR                                    |
+|    (Mem2Reg, constant folding, DCE)              |
+|    |                                             |
+|    v                                             |
+|  x86_64 Code Generation                          |
+|    (linear scan register allocation,             |
+|     instruction encoding, Win64/SysV ABI)        |
+|    |                                             |
+|    v                                             |
+|  PE / ELF Image Writer                           |
+|    (sections, imports, exports, relocations,     |
+|     COFF/ELF archive linker)                     |
++--------------------------------------------------+
+    |
+    v
+Native Binary (.exe / .dll / .lib / ELF / .so / .a)
+```
+
+There is no intermediate C or C++ stage. The compiler emits machine code directly into PE (Windows) or ELF (Linux) images. The entire pipeline -- from source text to loadable binary -- runs inside a single Delphi process with no child processes, no temporary files, and no external tools.
+
+### Key Capabilities
+
+| Capability | Details |
+|------------|---------|
+| **Native code generation** | x86_64 instruction encoding, REX/ModRM/SIB, SSE2 floating point. No assembler pass -- bytes go directly into the image. |
+| **Dual-target output** | Win64 PE and Linux64 ELF from the same compiler on the same machine. Cross-compile either direction. |
+| **Three artifact types** | Executables, dynamic libraries (DLL/SO), and static libraries (COFF .lib / ELF .a). All three work on both targets. |
+| **Built-in linker** | Consumes COFF and ELF static archives, resolves symbols transitively across multi-member archives, chases DEFAULTLIB directives into SDK import libraries. Links foreign C archives from both MSVC and MinGW/GNU toolchains. |
+| **Complete runtime** | Managed strings with atomic refcounting, heap tracking with leak reporting, structured exception handling (SEH on Windows, signal-based on Linux), command line parsing, dynamic arrays, wide strings, and a unit test framework -- all generated through the backend's own IR. |
+| **Three optimization levels** | None (debug), basic (Mem2Reg + constant folding), full (+ dead code elimination). All levels produce correct output on both targets -- cross-target parity is a hard invariant. |
+| **Structured exceptions** | `guard`/`except`/`throwcode`/`exccode` with hardware fault recovery. Works across static library boundaries. |
+| **Module system** | `exe`, `dll`, `lib` module kinds with `public`/`private` visibility, `initialize`/`finalize` blocks, and external declarations with automatic library resolution. |
+| **Conditional compilation** | `@ifdef`/`@ifndef`/`@else`/`@endif` with platform defines (`TARGET_X86_64_WINDOWS`, `TARGET_X86_64_LINUX`, `WIN64`, `LINUX`). Works at both declaration and statement level. |
+| **C interop** | `clink` calling convention for direct C ABI compatibility. Import from DLLs, shared objects, or static archives. Export from DLLs and shared objects. |
+| **Fluent builder API** | The compiler backend exposes a fluent Delphi API for programmatic IR construction. Language frontends target this API to produce native binaries without touching machine code. |
+| **Debugger support** | DAP protocol implementation with breakpoint management, stepping, variable inspection, and source mapping. |
+| **Language Server** | LSP JSON-RPC transport for editor integration -- diagnostics, completions, hover, go-to-definition. |
+
+### The Test Gate
+
+Every change to the compiler passes through a 30-run compliance gate before it ships:
+
+| Suite | What It Tests | Runs |
+|-------|---------------|------|
+| **EXE** | Types, operators, control flow, routines, strings, arrays, exceptions, managed temporaries | 6 (2 targets x 3 opt levels) |
+| **DLL** | Dynamic library exports/imports, global variables, DLL init/final | 6 |
+| **LIB** | Static library linking, transitive symbol resolution, lib init/final | 6 |
+| **UNITTEST** | Built-in unit test framework, test registration, assertion intrinsics | 6 |
+| **LINK** | Lib-to-lib deps, DLL globals through libs, search paths, SEH across lib boundaries, foreign MSVC archives, foreign MinGW/GNU archives, ADDR64 pointer tables, ADDR64 inside DLLs, multi-member archives, SDK import lib chasing, two DLLs in one process | 6 |
+
+Every run checks both correctness (exit code 0 = all asserts passed) and memory safety (heap leak count must be 0). The gate runs on both Windows x64 and Linux x64 at all three optimization levels.
+
+### What Makes It Different
+
+Most compiler projects lean on LLVM or GCC for code generation and linking. Myrissa does not. The entire backend -- register allocator, instruction encoder, PE writer, ELF writer, COFF linker, ELF linker, runtime library -- is original Delphi code with zero third-party dependencies.
+
+This means:
+
+- **No toolchain installation.** The compiler is a single executable. There is nothing to download, configure, or keep in sync.
+- **No intermediate representation leak.** You never debug LLVM IR or wonder what the C backend did to your types. The SSA dump shows exactly what the compiler sees.
+- **Total control.** Every section, every relocation, every import thunk is code you can read and change. When something goes wrong, the answer is always in this repository.
+- **Fast iteration.** Rebuild the compiler in Delphi, rebuild the test, run the gate. No waiting for LLVM to link. The full 30-run gate completes in minutes.
+
+### System Requirements
+
+| Area | Requirement |
+|------|-------------|
+| **Host OS** | Windows 10/11 x64 (compiler runs here; cross-compiles to Linux) |
+| **Runtime dependencies** | None -- native binaries are standalone |
+| **Building the compiler** | Delphi 12.x or higher |
+| **Linux execution** | WSL or native Linux x64 (for running Linux-target binaries) |
+
+<a id="documentation-guide"></a>
+
+## 🧭 Documentation Guide
+
 > [!TIP]
-> 💡 **Fast path:** read [Getting Started](#getting-started), skim [Language Reference](#language-reference), then jump into [How-To Guide](#how-to-guide) when you want copy-paste examples.
+> 💡 **Fast path:** read [Getting Started](#getting-started), skim [Language Reference](#language-reference), then jump to [C Interop](#c-interop) when you are ready to call external libraries.
 
 ### 🚦 Documentation Roadmap
 
 | Reader Goal | Start Here | Why |
 |-------------|------------|-----|
-| 🚀 Run your first program | [Getting Started](#getting-started) | Minimal setup, first `.myr` file, build modes, and project layout |
-| 📘 Learn the language | [Language Reference](#language-reference) | Types, routines, records, objects, modules, directives, and unit tests |
-| 🧾 Verify exact syntax | [BNF Grammar](#bnf-grammar) | Formal grammar rules, lexical elements, and precedence |
-| 🧬 Understand how the compiler defines the language | [Langdef System](#langdef-system) | MLD meta-language: tokens, grammar, semantics, emitters |
-| 🛠️ Use the toolchain | [Tools](#tools) | Compiler, debugger, CImporter, and LSP workflow |
-| 🔌 Embed Myrissa | [API Reference](#api-reference) | `Myrissa.dll` lifecycle, handles, callbacks, strings, and error handling |
-| 🧪 Solve a task | [How-To Guide](#how-to-guide) | Practical recipes with complete examples |
-
-### 💡 Core Idea
-
-Myrissa is designed around one direct workflow:
-
-```text
-write .myr  ->  run myrc  ->  get native Win64 or Linux64 output
-```
-
-The language keeps a Pascal/Oberon-style structure, but the toolchain is intentionally modern: native x64 output for both platforms, cross-compiled from a single Windows host, built-in diagnostics, built-in debugger support, built-in LSP support, and a DLL API for embedding the compiler into other tools.
-
-> [!IMPORTANT]
-> 🧱 Myrissa is not a scripting runtime that interprets source at execution time. It is a native compiler pipeline that turns source into machine code.
-
-
-### ✨ Key Features
-
-| Feature | What It Means |
-|---------|---------------|
-| **🧰 Zero external dependencies** | The full compiler pipeline runs in one invocation. No build system setup, no toolchain installation, and no PATH configuration. |
-| **⚡ Native x64 output** | Myrissa emits x86_64 machine code directly. There is no interpreter, VM, or bytecode layer. |
-| **🌍 Cross-platform targets** | Build for `win64` or `linux64` from the same source via the `@target` directive. PE output for Windows, ELF for Linux -- both cross-compiled from a single Windows host with no external toolchain. |
-| **🎯 Multiple output kinds** | Compile the same source to an executable, dynamic library, static library, or reusable unit module. |
-| **🐞 Built-in debugger** | Debug Adapter Protocol (DAP) support provides breakpoints, stepping, call stacks, and variable inspection. |
-| **🧠 Language Server Protocol** | Real-time diagnostics, completion, hover information, go-to-definition, references, and document symbols for editor integration. |
-| **🌉 CImporter** | Parse C headers and generate Myrissa bindings for C libraries such as Win32 APIs, raylib, SDL, and custom native DLLs. |
-| **🔌 Embeddable API** | `Myrissa.dll` exposes a flat C-callable API so host applications can embed the compiler, debugger, CImporter, and LSP. |
-
-
-### 🏗️ Architecture
-
-```
-Source (.myr)
-    |
-    v
-+-------------------------------------------+
-|  Layer 1: Language-Agnostic Engine        |
-|  (reads .mld files at startup)            |
-|                                           |
-|  Lexer --> Pratt Parser --> AST           |
-|              |                            |
-|              v                            |
-|  Semantics (type check, symbol resolve)   |
-|              |                            |
-|              v                            |
-|  Emitters (IR builtins from .mld)         |
-+-------------------------------------------+
-    |  IR instructions
-    v
-+-------------------------------------------+
-|  Layer 2: Native Backend                  |
-|                                           |
-|  IR --> SSA Optimization                  |
-|              |                            |
-|              v                            |
-|  x64 Codegen (register alloc, encoding)   |
-|              |                            |
-|              v                            |
-|  PE / ELF Linker (sections, imports,      |
-|                   exports, relocations)   |
-+-------------------------------------------+
-    |
-    v
-Output: .exe / .dll / .lib (win64)
-        elf / .so / .a    (linux64)
-
-Layer 3: .mld definition files
-(tokens, grammar, semantics, emitters -- the language itself)
-```
-
-The compiler is built as a three-layer pipeline. Layer 1 is a language-agnostic engine that reads `.mld` definition files at startup and uses them to lex, parse, analyze, and emit IR instructions. Layer 2 is the native backend that optimizes the IR through SSA passes and generates x64 machine code. Layer 3 is the `.mld` files themselves — plain-text definitions that specify everything about the Myrissa language. Change the `.mld` files and you change the language without recompiling the compiler.
-
-
-### 🧩 Toolchain Map
-
-| Component | Description |
-|-----------|-------------|
-| **Compiler** | Lexing, parsing, semantic analysis, IR generation, optimization, x64 code generation, and PE/ELF linking |
-| **Debugger** | DAP protocol, breakpoints, stepping, variable inspection, call stacks, and source mapping |
-| **🌉 CImporter** | C header parser and Myrissa binding generator for foreign function interfaces |
-| **LSP Server** | Language Server Protocol support for diagnostics, completion, hover, go-to-definition, references, and document symbols |
-| **Test Runner** | Built-in unit testing with assertions and automatic entry point replacement |
-| **Embedding DLL** | Flat C-compatible API for host applications that need runtime compilation or tooling integration |
-
+| 🚀 Run your first program | [Getting Started](#getting-started) | Install, first `.myr` file, build and run |
+| 📘 Learn the language | [Language Reference](#language-reference) | Types, operators, routines, control flow, expressions |
+| 📦 Understand modules | [Module System](#module-system) | exe, dll, lib, unit -- imports, visibility, init/final |
+| 🔗 Call C code | [C Interop](#c-interop) | External clause, name aliasing, static and dynamic libraries, CImporter |
+| 🧠 Memory and data structures | [Memory and Data Structures](#memory-data-structures) | Pointers, arrays, records, choices, sets, heap allocation |
+| 🧾 Verify exact syntax | [Formal Grammar](#bnf-grammar) | BNF rules derived from the parser |
+| ⚙️ Runtime library | [Runtime Library](#runtime-library) | rt_* functions, intrinsics, exception handling |
+| 🐛 Debug your code | [Debugging](#debugging) | DAP protocol, breakpoints, source-level debugging |
+| ✍️ Follow conventions | [Code Style](#code-style) | Naming, formatting, file organization |
+| 🛠️ Common tasks | [Common Tasks](#common-tasks) | Practical recipes for everyday Myrissa work |
 
 ### 🎯 Who Is This For?
 
-- **Game developers** who want scripting-language convenience while still compiling to native machine code. Myrissa's `subsystem.routine` API style, such as `gfx.clear` and `input.pressed`, is designed to pair naturally with the PIXELS 2D engine. Import C libraries like raylib and SDL via the built-in CImporter -- one generated binding serves both Windows and Linux.
-- **Tool builders** who need an embeddable compiler. Ship `Myrissa.dll` and give your application native-code compilation at runtime.
-- **Language enthusiasts** who want to study a complete native compiler stack, from parsing and SSA IR through register allocation and PE/ELF linking.
-- **Windows and Linux developers** who want standalone native binaries for either platform without shipping .NET, JVM, Python, or a pile of runtime libraries.
+- **Systems programmers** who want a Pascal-flavored alternative to C with modules, a rich type system, and first-class C interop.
+- **Delphi/Pascal developers** who want a systems language that feels familiar and compiles straight to native code with nothing else to install.
+- **C library consumers** who want to call SDL3, raylib, OpenGL, or any C library without writing binding generators or FFI boilerplate.
+- **Cross-platform developers** who want to target Windows and Linux from a single codebase with a single compiler invocation.
 
+### 🖥️ CLI Reference
+
+<a id="cli-reference"></a>
+
+Myrissa ships a single command-line compiler, `myr`, for building and running `.myr` projects. There is nothing else to install.
+
+**Syntax:**
+
+```
+myr <source> [options]
+myr cimport <script> [options]
+```
+
+**Build and Run:**
+
+| Flag | Description |
+|------|-------------|
+| `-r, --run` | Run after successful build |
+| `-d, --debug` | Build with debug info and launch the debugger |
+| `-t, --target <target>` | Set compilation target: `win64` (default) or `linux64` |
+| `-o, --output <path>` | Set output directory |
+| `-sub, --subsystem <type>` | Set subsystem: `console` (default) or `gui` |
+| `-opt, --optimize <level>` | Set optimization level: `none` (default), `basic`, `full` |
+| `-h, --help` | Show help |
+
+**Examples:**
+
+```
+myr hello -r
+myr hello -r -t linux64
+myr hello -r -opt full
+myr hello -d
+```
+
+> [!NOTE]
+> 📌 `-r` and `-d` are mutually exclusive. The debugger requires the `win64` target. Pass the source filename without the `.myr` extension. Linux binaries built on Windows can be run through WSL.
 
 ### 📌 Current Status
 
-The compiler stack is working end-to-end with support for:
+The compiler is working end-to-end with support for:
 
-- Primitive types: integers, floats, booleans, characters, strings, wide strings, and pointers
-- Records with inheritance, packed layout, custom alignment, and bit fields
-- Objects with methods, `self`/`parent`, and create/destroy lifecycle management
-- Choices, sets, overlays, routine types, and variadic arguments
-- Control flow: `if`, `while`, `for`, `repeat`, and `match`
-- Exception handling with `guard`, `except`, `finally`, `throw`, and `throwcode`
-- External function declarations with per-target library resolution
-- Module imports, module qualification, public/private visibility, and lifecycle hooks
-- Conditional compilation with `@define`, `@ifdef`, `@ifndef`, `@elseif`, `@else`, and `@endif`
-- Built-in unit testing with assertion helpers and test runner injection
-- SSA optimization passes, including Mem2Reg, constant folding, and dead code elimination
-- Cross-platform targets: `win64` and `linux64` via the `@target` directive, cross-compiled from a single Windows host
-- Win64 and SysV ABI calling conventions, including C-style linkage and `cpplink`
-- PE generation with `.text`, `.rdata`, `.data`, `.idata`, `.edata`, `.pdata`, and `.reloc` sections; ELF generation for Linux executables, shared objects, and static libraries
-- DAP debugger, LSP server, and CImporter tooling
-- Official test suite: 26 test files covering every major BNF section, passing on both win64 and linux64 targets
-- Language definition via `.mld` files: the entire language (tokens, grammar, semantics, emitters) is defined in editable plain-text definition files that the engine reads at startup
-
-
-### 💻 System Requirements
-
-| Area | Requirement |
-|------|-------------|
-| **Operating system** | Windows 10/11 x64 |
-| **Compilation targets** | Windows x64 (PE) and Linux x64 (ELF), both cross-compiled from the Windows host |
-| **Runtime dependencies** | None |
-| **External toolchain** | None |
-| **Building from source** | Delphi 12.x or higher |
-
+- 16 primitive types with exact machine sizes
+- Variables, typed/untyped constants, constant expressions
+- Arithmetic, comparison, logical, bitwise, and compound assignment operators
+- Control flow: `if`/`else`, `while`, `for`, `repeat`/`until`, `match`, `guard`, `break`, `continue`
+- Routines: procedures, functions, overloading, const/var/out parameters, forward declarations
+- Records: plain, packed, aligned, derived, overlay, tagged, bitfield, with methods and operators
+- Choices (discriminated unions), sets, fixed arrays, dynamic arrays
+- Typed and untyped pointers, `new`/`dispose`, `getmem`/`freemem`/`resizemem`
+- Module system: exe, dll, lib, unit with public/private visibility
+- C interop: `external "c"`, `name` alias, `clink`/`cpplink`, static and dynamic library import, DLL/SO export
+- Conditional compilation: `@ifdef`/`@ifndef`/`@define`/`@undef`/`@else`/`@elseif`/`@endif`
+- Source-level debugging: DAP protocol, `@breakpoint`, native source maps
+- Built-in testing: `test` blocks with assertion intrinsics
+- CImporter: generate `.myr` bindings from C headers
+- Cross-compilation: Windows and Linux targets from one compiler on one machine
 
 ### 🗺️ Table of Contents
 
-- 🚀 [Getting Started](#getting-started): installation assumptions, first script, build modes, project layout, editor support
-- 📘 [Language Reference](#language-reference): types, operators, routines, control flow, records, objects, modules, directives, and tests
-- 🧾 [BNF Grammar](#bnf-grammar): formal grammar and lexical rules
-- 🧬 [Langdef System](#langdef-system): MLD meta-language reference
-- 🛠️ [Tools](#tools): compiler, debugger, CImporter, and LSP server
-- 🔌 [API Reference](#api-reference): `Myrissa.dll` C API for embedding
-- 🧪 [How-To Guide](#how-to-guide): practical recipes for common tasks
+- 🚀 [Getting Started](#getting-started): installation, first program, build and run
+- 📘 [Language Reference](#language-reference): types, operators, routines, control flow, expressions
+- 📦 [Module System](#module-system): exe, dll, lib, unit, imports, visibility
+- 🔗 [C Interop](#c-interop): external clause, static and dynamic libraries, CImporter
+- 🧠 [Memory and Data Structures](#memory-data-structures): pointers, arrays, records, choices, sets
+- 🧾 [Formal Grammar](#bnf-grammar): BNF rules derived from the parser
+- ⚙️ [Runtime Library](#runtime-library): rt_* functions, intrinsics
+- 🐛 [Debugging](#debugging): DAP, breakpoints, source-level debugging
+- ✍️ [Code Style](#code-style): naming conventions and formatting
+- 🛠️ [Common Tasks](#common-tasks): practical recipes for everyday work
 
 <a id="getting-started"></a>
 
 ## 🚀 Getting Started
 
-This section gets you from an empty folder to a running native executable. For language details, see [Language Reference](#language-reference). For task-based examples, see [How-To Guide](#how-to-guide).
-
-
-### 🧰 Requirements
-
-- Windows 10 or later, x64
-- No external compiler, linker, SDK, runtime, or package manager
-
-> [!NOTE]
-> 🧰 Myrissa is self-contained. The compiler, optimizer, linker, runtime support, debugger, CImporter, and LSP tooling are built in.
-
-### 🧭 Mental Model
-
-A Myrissa project is just source files plus the `myrc` compiler. There is no external linker project, no runtime package folder, and no separate SDK install.
-
-| Concept | Meaning |
-|---------|---------|
-| 📄 `.myr` | Human-written source file |
-| 📦 `.myr` unit | Reusable module compiled inline into the importer |
-| 🚀 `module exe` | Native executable entry point |
-| 🧩 `module dll` | Dynamic library with exported routines |
-| 🧱 `module lib` | Static library output |
+This section walks you through installing Myrissa, writing your first program, and building it. By the end you will have a working `.myr` project that compiles to a native binary.
 
 > [!TIP]
-> 🧠 Think of the first line of every file as the build contract. `module exe hello;` says what the file produces and what the module is called.
+> 💡 If you already know what Myrissa is, skip straight to [Your First Program](#your-first-program). For the big picture, see the [Overview](#overview).
 
+### 📋 Prerequisites
 
-### 👋 Your First Script
+Myrissa compiles your `.myr` source directly to a native binary. There is no intermediate language, no external compiler, and no linker to install. You need:
 
-Create a file named `hello.myr`:
+| Requirement | Details |
+|-------------|---------|
+| **Operating system** | Windows 10/11 x64 (Linux targets run under WSL or on a Linux x64 machine) |
+| **Myrissa compiler** | The `myr` executable (see [Installation](#installation)) |
 
-```
+No other runtime, SDK, or framework is required. Myrissa produces standalone native binaries with no runtime dependencies.
+
+### 📥 Installation
+
+<a id="installation"></a>
+
+1. Download the latest Myrissa release from [GitHub](https://github.com/tinyBigGAMES/Myrissa/releases).
+2. Extract the archive to a directory of your choice.
+3. Add the directory containing `myr.exe` to your system `PATH`, or run it directly from its location.
+
+That is all. There is nothing to download on first build and nothing to cache.
+
+> [!NOTE]
+> 📌 If you want to build the Myrissa compiler itself from source, you need Delphi 12.x or higher. Most users only need the pre-built `myr` binary.
+
+### 📝 Your First Program
+
+<a id="your-first-program"></a>
+
+Create a file called `hello.myr`:
+
+```myr
 module exe hello;
-
 begin
   println("Hello, Myrissa!");
 end.
 ```
 
-Compile and run it:
+Every Myrissa program starts with a **module declaration**: `module <kind> <name>;`. Here, `exe` means this module produces an executable, and `hello` is the module name -- which must match the filename (without extension).
+
+The `begin...end.` block is the program's entry point, equivalent to `main()` in C. Note the period after the final `end` -- it marks the end of the module.
+
+### 🔨 Building and Running
+
+<a id="building-and-running"></a>
+
+Open a terminal in the directory containing `hello.myr` and run:
 
 ```
-myrc -s hello.myr -r
+myr hello -r
 ```
 
-Expected output:
+The `-r` flag tells the compiler to run the program immediately after a successful build. You should see:
 
 ```
 Hello, Myrissa!
 ```
 
-The command compiles `hello.myr` to a native executable and runs it. The default target is `win64`; add `@target linux64;` to the source to cross-compile a native Linux binary from the same Windows host.
-
-> [!TIP]
-> Every source file starts with a `module` declaration. The declaration defines the module kind (`exe`, `dll`, `lib`, or `unit`) and the module name.
-
-
-### 🏗️ Build Modes
-
-Myrissa can produce several target types. The output type is determined by the `module` declaration in the source file:
-
-| Module Declaration | Output (win64 / linux64) | Description |
-|-------------------|--------------------------|-------------|
-| `module exe name` | `name.exe` / `name` | Native executable |
-| `module dll name` | `name.dll` / `name.so` | Dynamic library with exported routines |
-| `module lib name` | `name.lib` / `name.a` | Static library, linkable by Myrissa or other compilers |
-| `module unit name` | (none) | Reusable module compiled inline into the importing module |
-
-Common CLI patterns:
-
-| Command | Effect |
-|---------|--------|
-| `myrc -s hello.myr` | Compile only |
-| `myrc -s hello.myr -r` | Compile and run |
-| `myrc -s hello.myr -o build` | Compile with custom output path |
-| `myrc -s hello.myr -d` | Compile and launch the debugger |
-
-
-#### EXE: Standalone Executable
-
-The default mode produces a native executable with no runtime dependencies -- a PE executable on `win64`, an ELF executable on `linux64`:
+To build without running:
 
 ```
+myr hello
+```
+
+This produces a native executable (`hello.exe` for Windows, `hello` for Linux) in the output directory.
+
+> [!IMPORTANT]
+> 🧱 Pass the source filename **without** the `.myr` extension. The compiler adds it automatically.
+
+### 🎯 Cross-Compilation
+
+Myrissa can produce Windows or Linux binaries from the same compiler on the same machine. Use the `-t` flag to set the target:
+
+```
+myr hello -r -t win64
+myr hello -r -t linux64
+```
+
+The default target is `win64`. A `linux64` binary built on Windows is run through WSL when `-r` is given.
+
+### ⚡ Optimization Levels
+
+By default, Myrissa builds with no optimization and writes a `.mdbg` debug-info file beside the binary. Use `-opt` to set the optimization level:
+
+| Level | Flag | Description |
+|-------|------|-------------|
+| None | `-opt none` | No optimization, `.mdbg` debug info written (default) |
+| Basic | `-opt basic` | Mem2Reg and constant folding |
+| Full | `-opt full` | Basic plus dead code elimination |
+
+```
+myr hello -r -opt full
+```
+
+### 🐛 Debugging
+
+To build with debug info and launch the debugger:
+
+```
+myr hello -d
+```
+
+This starts a DAP-compatible debug session. You can set breakpoints in your `.myr` source using the `@breakpoint` directive:
+
+```myr
+module exe debugdemo;
+begin
+  var x: int32 = 42;
+  @breakpoint;
+  println("x = %d", x);
+end.
+```
+
+> [!NOTE]
+> 📌 The debugger currently requires the `win64` target. The `-d` and `-r` flags are mutually exclusive.
+
+### 📦 Module Kinds
+
+Myrissa has four module kinds, each producing a different output:
+
+| Kind | Declaration | Output | Entry Point |
+|------|-------------|--------|-------------|
+| `exe` | `module exe myapp;` | Executable (.exe/.elf) | `begin...end.` |
+| `dll` | `module dll mylib;` | Shared library (.dll/.so) | `end.` (no main body) |
+| `lib` | `module lib mylib;` | Static library (.a/.lib) | `end.` (no main body) |
+| `unit` | `module unit myutil;` | Compiled inline | `end.` (no main body) |
+
+Only `exe` modules have a `begin...end.` main body. Library and unit modules end with just `end.` and expose functionality through `public` routines, types, and constants.
+
+### 🔗 Importing Modules
+
+To use code from another module, import it:
+
+```myr
 module exe myapp;
+import mathlib;
 begin
-  println("Running as a standalone .exe");
+  println("%d", mathlib.add(2, 3));
 end.
 ```
 
+All public symbols from imported modules must be **fully qualified** with the module name: `mathlib.add`, `mathlib.MY_CONST`, `mathlib.MyType`. Unqualified access is a compile error.
 
-#### DLL: Dynamic Link Library
+### 📐 Project Structure
 
-Use `module dll` and mark exported routines as `public`:
+A typical Myrissa project looks like this:
 
 ```
-module dll mylib;
+myproject/
+  myapp.myr           -- main executable module
+  mathlib.myr         -- utility unit module
+  graphics.myr        -- another unit module
+```
 
-public routine calculate(x: int32; y: int32): int32;
+Each `.myr` file is one module. The module name in the declaration must match the filename. The compiler resolves imports automatically and compiles dependencies in the correct order.
+
+### 🔄 Initialize and Finalize
+
+Any module can have `initialize` and `finalize` blocks that run at startup and shutdown:
+
+```myr
+module unit myutil;
+
+public routine helper(): int32;
 begin
-  return x * x + y * y;
+  return 42;
+end;
+
+initialize
+  println("myutil loaded");
+end;
+
+finalize
+  println("myutil unloaded");
 end;
 
 end.
 ```
 
+`initialize` runs before the main `begin` block. `finalize` runs after the main program finishes. Both are optional.
 
-#### Static Library
+### 🧪 Built-in Testing
 
-Use `module lib` to produce a static library (`.lib` on win64, `.a` on linux64) that can be linked by Myrissa or any other compiler that supports the target's static library format:
+Myrissa has built-in test support. Add `@unittestmode on;` and place test blocks after `end.`:
 
-```
-module lib mathlib;
+```myr
+module exe mylib;
+@unittestmode on;
 
-public routine add(a: int32; b: int32): int32;
-begin
-  return a + b;
-end;
-
-end.
-```
-
-
-#### Unit Modules
-
-Unit modules are reusable `.myr` source files that other modules can import. When a module imports a unit, the unit is compiled inline into the importing module -- there is no separate output file:
-
-```
-module unit helpers;
-
-public routine double(n: int32): int32;
+routine double(const n: int32): int32;
 begin
   return n * 2;
 end;
 
 end.
-```
 
-Import the unit from another module:
-
-```
-module exe main;
-
-import helpers;
-
+test "double returns correct values"
 begin
-  println("%d", helpers.double(21));   // 42
-end.
+  asserteq(4, double(2));
+  asserteq(0, double(0));
+  asserteq(-6, double(-3));
+end;
+
+test "double handles large values"
+begin
+  asserteq(2000000, double(1000000));
+end;
 ```
 
-> [!IMPORTANT]
-> 📥 Imported symbols must be accessed with full module qualification. Use `helpers.double`, not `double`. This keeps imports explicit and prevents symbol conflicts between modules.
+When `@unittestmode` is on, the test runner replaces the normal entry point. Tests run with assertion intrinsics like `asserteq`, `asserttrue`, `assertfalse`, `assertnil`, and `assertfail`.
 
+### ⚠️ Error Messages
 
-### 🗂️ Project Structure
-
-A typical project keeps the executable entry point separate from reusable unit modules:
+Myrissa provides clear error messages with source locations:
 
 ```
-myproject/
-  main.myr          // entry point (module exe)
-  utils.myr         // utility module (module unit)
-  mathlib.myr       // math library (module unit)
-  assets/           // game assets, resources, data files
+hello.myr(5,10): error SEM001: undeclared identifier 'x'
+hello.myr(8,3): error SEM003: type mismatch: expected 'int32', got 'string'
 ```
 
-For larger projects, use `@libpath` to add module search directories:
+Each message includes the file, line, column, error code, and a description of the problem.
 
+### 🗂️ Quick Reference Card
+
+**Module declaration:**
+```myr
+module exe myapp;       // executable
+module dll mylib;       // shared library
+module unit myutil;     // inline unit
+module lib mystaticlib; // static library
 ```
-@libpath "libs";
-import mathlib;
+
+**Common CLI commands:**
+```
+myr myapp -r                 -- build and run
+myr myapp -d                 -- build and debug
+myr myapp -r -t linux64      -- cross-compile to Linux
+myr myapp -r -opt full       -- optimized build
+myr myapp -h                 -- show help
+```
+
+**Essential syntax:**
+```myr
+// Variables and constants
+var x: int32 = 10;
+const MAX: int32 = 100;
+
+// Output (C printf format: %d, %lld, %f, %s with cstr())
+println("x = %d, max = %d", x, MAX);
+
+// Control flow (always terminated with end;)
+if x > 0 then
+  println("positive");
+end;
+
+while x > 0 do
+  x -= 1;
+end;
+
+for i := 1 to 10 do
+  println("%d", i);
+end;
+
+// Routines
+routine add(a: int32; b: int32): int32;
+begin
+  return a + b;
+end;
 ```
 
 > [!TIP]
-> 💡 Keep units small and focused. Because imports require module qualification, names stay readable even when a project grows.
-
-
-
-### ✅ First-Project Checklist
-
-Before moving from a tiny sample to a real project, verify these basics:
-
-- 🧪 A `module exe` file builds and runs from the command line
-- 📦 Shared code lives in `module unit` files
-- 📥 Imports use full module qualification, such as `helpers.double(21)`
-- 🗂️ Reusable units are kept in predictable folders
-- 🔎 `@libpath` points to any folder that contains imported units
-- 🧯 Errors are fixed at the first reported source location before chasing follow-up messages
-
-### 🧯 Common First-Run Issues
-
-| Symptom | Likely Cause | Fix |
-|---------|--------------|-----|
-| `module not found` | Unit file is not in the current folder or `@libpath` | Add `@libpath "folder"` or move the unit next to the main file |
-| `unknown symbol` | Imported symbol was called without module qualification | Use `moduleName.symbolName` |
-| Output is not what you expected | The default command compiled and ran the EXE immediately | Use `-o output.exe` when you only want to build |
-| DLL routine is not visible | Routine is missing `public` | Mark exported routines as `public` |
-
-> [!NOTE]
-> 🧩 Myrissa favors explicitness. Fully qualified imports and clear module kinds make larger projects easier to understand.
-
-### 🧠 Editor Support
-
-Myrissa includes a Language Server Protocol (LSP) implementation for real-time IDE features:
-
-| Feature | Description |
-|---------|-------------|
-| Diagnostics | Errors and warnings as you type |
-| Completion | Context-aware suggestions for keywords, types, routines, and symbols |
-| Hover | Type and documentation information on mouse hover |
-| Go-to-definition | Jump to symbol declarations |
-| Document symbols | Outline view of the current module |
-| References | Find usages of a symbol |
-
-The LSP server communicates over stdin/stdout using JSON-RPC and works with editors that support LSP, including VS Code.
-
-
-#### 🐞 Debugger Integration
-
-The built-in debugger supports the Debug Adapter Protocol (DAP), which enables a graphical debugging workflow in VS Code and other DAP-capable editors:
-
-- Set breakpoints from the editor gutter or with `@breakpoint`
-- Step into, over, and out of routines
-- Inspect variables and watch expressions
-- Navigate the call stack
-
-See [Tools](#tools) for detailed debugger and LSP documentation.
+> 💡 Continue to the [Language Reference](#language-reference) for the full syntax, or jump to [C Interop](#c-interop) to start calling C libraries.
 
 <a id="language-reference"></a>
 
 ## 📘 Language Reference
 
-Myrissa is a statically-typed, compiled language with Pascal/Oberon-inspired syntax. It is case-sensitive, uses `end` to close blocks, and compiles directly to native x64 machine code with zero external dependencies.
-
-Use this section as the practical language reference. For the formal grammar, see [BNF Grammar](#bnf-grammar). For complete examples, see [How-To Guide](#how-to-guide).
-
-> [!NOTE]
-> ✍️ Myrissa uses `:=` for assignment and `=` for equality comparison. Keywords are lowercase and case-sensitive. Semicolons terminate declarations but are optional after statements.
-
-### 🧭 Language Model at a Glance
-
-Myrissa uses a small set of consistent rules across the whole language:
-
-| Rule | What to Remember |
-|------|------------------|
-| 🧱 Static types | Every variable, field, parameter, and routine result has a known type |
-| ✍️ Assignment | `:=` assigns a value; `=` compares values |
-| 🔤 Case-sensitive names | `Value`, `value`, and `VALUE` are different identifiers |
-| 🚪 Block endings | Structured blocks close with `end` |
-| 📦 Modules | Every source file starts with a `module` declaration |
-| 📥 Imports | Imported symbols are accessed through `moduleName.symbolName` |
-| 🧪 Tests | Unit test modules can use built-in assertion helpers |
+This section covers every language construct in Myrissa: types, literals, variables, constants, operators, control flow, routines, and expressions. For module-level features (imports, visibility, init/final), see [Module System](#module-system). For pointers, arrays, records, and heap allocation, see [Memory and Data Structures](#memory-data-structures).
 
 > [!TIP]
-> 💎 When reading Myrissa code, scan for `module`, then `import`, then declarations, then the final `begin ... end.` body. That gives you the shape of the file quickly.
+> 💡 Myrissa is case-sensitive: keywords are lowercase, and identifiers that differ only in case are different identifiers. There is no `T` prefix convention on type names -- use PascalCase for types, camelCase for variables, and UPPER_CASE for constants.
 
+### 🔢 Primitive Types
 
-### 💬 Comments
+Myrissa has 16 built-in primitive types. All are reserved words and cannot be used as identifiers.
 
-```
-// single-line comment
+#### Integer Types
 
-/* multi-line
-   comment */
+| Type | Size | Range | C Equivalent |
+|------|------|-------|--------------|
+| `int8` | 1 byte | -128 to 127 | `int8_t` |
+| `int16` | 2 bytes | -32,768 to 32,767 | `int16_t` |
+| `int32` | 4 bytes | -2^31 to 2^31-1 | `int32_t` |
+| `int64` | 8 bytes | -2^63 to 2^63-1 | `int64_t` |
+| `uint8` | 1 byte | 0 to 255 | `uint8_t` |
+| `uint16` | 2 bytes | 0 to 65,535 | `uint16_t` |
+| `uint32` | 4 bytes | 0 to 2^32-1 | `uint32_t` |
+| `uint64` | 8 bytes | 0 to 2^64-1 | `uint64_t` |
 
-/* block comments /* can be nested */ like this */
-```
+#### Floating-Point Types
 
-Line comments begin with `//` and extend to the end of the line. Block comments use `/* ... */` and may be nested to any depth.
+| Type | Size | Description | C Equivalent |
+|------|------|-------------|--------------|
+| `float32` | 4 bytes | 32-bit IEEE 754 | `float` |
+| `float64` | 8 bytes | 64-bit IEEE 754 | `double` |
 
-> [!NOTE]
-> 💎 Myrissa does not use `(* *)` or `{ }` as comment delimiters.
+#### Other Types
 
+| Type | Size | Description | C Equivalent |
+|------|------|-------------|--------------|
+| `boolean` | 1 byte | `true` or `false` | `bool` |
+| `char` | 1 byte | 8-bit character (UTF-8) | `char` |
+| `wchar` | 2 bytes | 16-bit wide character | `char16_t` |
+| `string` | 8 bytes | Managed UTF-8 string (refcounted) | `const char*` via `cstr()` |
+| `wstring` | 8 bytes | Managed UTF-16 string (refcounted) | `const wchar_t*` via `wstr()` |
+| `pointer` | 8 bytes | Untyped pointer | `void*` |
 
-### 🧱 Types
+### ✏️ Literals
 
-Myrissa has a concrete type system that maps directly to machine reality. Primitive values have known sizes at compile time, and aggregate types such as records, arrays, overlays, and objects are built from those primitives.
+#### Integer Literals
 
-#### 🔢 Integer Types
-
-| Type | Size | Range |
-|------|------|-------|
-| `int8` | 1 byte | -128 to 127 |
-| `int16` | 2 bytes | -32,768 to 32,767 |
-| `int32` | 4 bytes | -2,147,483,648 to 2,147,483,647 |
-| `int64` | 8 bytes | Full 64-bit signed range |
-| `uint8` | 1 byte | 0 to 255 |
-| `uint16` | 2 bytes | 0 to 65,535 |
-| `uint32` | 4 bytes | 0 to 4,294,967,295 |
-| `uint64` | 8 bytes | Full 64-bit unsigned range |
-
-#### 🧮 Floating-Point Types
-
-| Type | Size | Description |
-|------|------|-------------|
-| `float32` | 4 bytes | 32-bit IEEE 754 |
-| `float64` | 8 bytes | 64-bit IEEE 754 |
-
-Float literals without a suffix are resolved from context. If the context is ambiguous, the compiler uses `float64`. Append `f` or `F` to force `float32`:
-
-```
-var x: float64 = 3.14159;       // float64
-var y: float32 = 3.14f;         // float32
+```myr
+var x: int32 = 42;          // decimal
+var h: int32 = 0xFF;        // hexadecimal (0x prefix)
 ```
 
-#### ✅ Boolean Type
+Untyped integer literals default to `int32`.
 
-| Type | Size | Values |
-|------|------|--------|
-| `boolean` | 1 byte | `true`, `false` |
+#### Floating-Point Literals
 
-#### 🔤 Character Types
-
-| Type | Size | Description |
-|------|------|-------------|
-| `char` | 1 byte | 8-bit character |
-| `wchar` | 2 bytes | 16-bit wide character |
-
-Characters are assigned using single-character string literals. The compiler verifies the literal is exactly one character:
-
-```
-var c: char = "A";
-var wc: wchar = w"B";
+```myr
+var a: float64 = 3.14;      // contextual (float32 or float64 depending on target type)
+var b: float32 = 3.14f;     // explicit float32 (f suffix)
 ```
 
-#### 🧵 String Types
+#### String Literals
 
-| Type | Size | Description |
-|------|------|-------------|
-| `string` | 8 bytes (pointer) | Managed UTF-8 string |
-| `wstring` | 8 bytes (pointer) | Managed UTF-16 string |
+Strings use double quotes with C-style escape sequences:
 
-```
-var name: string = "Myrissa";
-var wide: wstring = w"Hello, world!";
+```myr
+var s: string = "hello world";
+var escaped: string = "line1\nline2\ttab";
 ```
 
-Escape sequences: `\n` (newline), `\t` (tab), `\r` (carriage return), `\0` (null), `\\` (backslash), `\"` (quote), `\xNN` (hex byte).
+| Escape | Meaning |
+|--------|---------|
+| `\n` | Newline |
+| `\t` | Tab |
+| `\r` | Carriage return |
+| `\0` | Null character |
+| `\\` | Backslash |
+| `\'` | Single quote |
+| `\"` | Double quote |
+| `\xHH` | Hex byte value |
 
-#### 📍 Pointer Type
+#### Wide String Literals
 
-| Type | Size | Description |
-|------|------|-------------|
-| `pointer` | 8 bytes | Untyped pointer |
+Prefix a string with lowercase `w` for UTF-16:
 
-Typed pointers and pointer operations are described in the [Pointers](#pointers) section below.
+```myr
+var ws: wstring = w"hello wide world";
+```
 
-> [!TIP]
-> Integer literals default to `int32`. Hex literals use `0x` prefix: `var flags: uint32 = 0xFF00;`
+Wide strings support the same escape sequences as regular strings.
 
+#### Boolean Literals
+
+```myr
+var flag: boolean = true;
+var done: boolean = false;
+```
+
+#### Nil Literal
+
+```myr
+var p: pointer = nil;        // null pointer
+```
+
+#### Character Assignment
+
+Characters are assigned from single-character strings. The compiler checks that the string contains exactly one character:
+
+```myr
+var c: char = "A";           // single UTF-8 character
+var wc: wchar = w"X";       // single UTF-16 character
+```
 
 ### 📦 Variables
 
-Variables are declared with `var` and require an explicit type. An initializer is optional; variables without one are default-initialized:
+Variables are declared with `var` and an optional initializer:
 
-```
-var x: int32 = 42;
-var name: string = "Myrissa";
-var pi: float64 = 3.14159;
-var count: int32;              // default zero-initialized
-```
-
-Multiple variables can appear in a `var` section:
-
-```
-var
-  width: int32 = 800;
-  height: int32 = 600;
-  title: string = "My App";
+```myr
+var x: int32 = 10;           // with initializer
+var y: int32;                // zero-initialized
+var name: string = "Alice";
 ```
 
+Variables can also be declared inline within statement blocks:
+
+```myr
+begin
+  var sum: int32 = a + b;
+  println("sum = %d", sum);
+end.
+```
 
 ### 🔒 Constants
 
-Constants are declared with `const` and must provide an initial value:
+Constants are declared with `const`. They can be typed or untyped:
 
-```
-const MAX_SIZE: int32 = 1024;
-const GREETING: string = "Hello";
-const PI: float64 = 3.14159265358979;
-```
-
-
-### 🏷️ Type Aliases
-
-Use `type` aliases to give an existing type a domain-specific name:
-
-```
-type
-  Byte = uint8;
-  Word = uint16;
-  Size = int64;
+```myr
+const
+  MAX: int32 = 100;          // typed constant
+  PI: float64 = 3.14159;
+  GREETING = "hello";        // untyped (type inferred)
 ```
 
+Constant expressions are evaluated at compile time:
 
-### ⚙️ Operators
+```myr
+const
+  DOUBLED = 21 * 2;          // expression constant (42)
+  IS_EQ = 5 = 5;             // boolean expression constant (true)
+```
 
-#### ➕ Arithmetic
+### ➕ Operators
 
-| Operator | Description |
-|----------|-------------|
-| `+` | Addition |
-| `-` | Subtraction |
-| `*` | Multiplication |
-| `/` | Division (float) |
-| `div` | Integer division |
-| `mod` | Modulo (remainder) |
+#### Arithmetic Operators
 
-#### ⚖️ Comparison
+| Operator | Meaning | Example |
+|----------|---------|---------|
+| `+` | Addition | `a + b` |
+| `-` | Subtraction / unary negation | `a - b`, `-x` |
+| `*` | Multiplication | `a * b` |
+| `/` | Division | `a / b` |
+| `div` | Integer division | `a div b` |
+| `mod` | Modulo | `a mod b` |
 
-| Operator | Description |
-|----------|-------------|
-| `=` | Equal |
-| `<>` | Not equal |
-| `<` | Less than |
-| `>` | Greater than |
-| `<=` | Less than or equal |
-| `>=` | Greater than or equal |
-| `in` | Set membership |
+#### Comparison Operators
 
-#### 🔀 Logical
+| Operator | Meaning | Example |
+|----------|---------|---------|
+| `=` | Equal | `a = b` |
+| `<>` | Not equal | `a <> b` |
+| `<` | Less than | `a < b` |
+| `>` | Greater than | `a > b` |
+| `<=` | Less or equal | `a <= b` |
+| `>=` | Greater or equal | `a >= b` |
 
-| Operator | Description |
-|----------|-------------|
-| `and` | Logical AND |
-| `or` | Logical OR |
-| `not` | Logical NOT |
-| `xor` | Logical XOR |
+#### Logical and Bitwise Operators
 
-#### 🧬 Bitwise
+| Operator | Meaning | Example |
+|----------|---------|---------|
+| `and` | Logical/bitwise AND | `a and b` |
+| `or` | Logical/bitwise OR | `a or b` |
+| `xor` | Logical/bitwise XOR | `a xor b` |
+| `not` | Logical/bitwise NOT | `not a` |
+| `shl` | Bit shift left | `a shl 2` |
+| `shr` | Bit shift right | `a shr 2` |
 
-| Operator | Description |
-|----------|-------------|
-| `and` | Bitwise AND (context-dependent) |
-| `or` | Bitwise OR (context-dependent) |
-| `xor` | Bitwise XOR (context-dependent) |
-| `shl` | Shift left |
-| `shr` | Shift right |
+#### Compound Assignment Operators
 
-#### ✍️ Assignment
+| Operator | Equivalent | Example |
+|----------|------------|---------|
+| `+=` | `x := x + y` | `x += 1` |
+| `-=` | `x := x - y` | `x -= 1` |
+| `*=` | `x := x * y` | `x *= 2` |
+| `/=` | `x := x / y` | `x /= 2` |
 
-| Operator | Description |
-|----------|-------------|
-| `:=` | Assignment |
-| `+=` | Add and assign |
-| `-=` | Subtract and assign |
-| `*=` | Multiply and assign |
-| `/=` | Divide and assign |
+#### Other Operators
 
-#### 🎚️ Operator Precedence (Highest to Lowest)
+| Operator | Meaning | Example |
+|----------|---------|---------|
+| `:=` | Assignment | `x := 42` |
+| `^` | Pointer dereference (postfix) | `p^` |
+| `address of` | Address-of (prefix) | `address of x` |
+| `in` | Set membership | `5 in mySet` |
 
-| Precedence | Operators |
-|------------|-----------|
+#### Operator Precedence
+
+From highest to lowest:
+
+| Level | Operators |
+|-------|-----------|
 | 1 (highest) | `not`, unary `-`, unary `+`, `address of` |
 | 2 | `*`, `/`, `div`, `mod`, `and`, `shl`, `shr` |
 | 3 | `+`, `-`, `or`, `xor` |
 | 4 (lowest) | `=`, `<>`, `<`, `>`, `<=`, `>=`, `in` |
 
+Use parentheses to override precedence when needed.
 
-### 🔧 Routines
+### 🔀 Control Flow
 
-Functions and procedures are both declared with the `routine` keyword. A routine with a return type behaves as a function; a routine without a return type behaves as a procedure:
+All control-flow statements in Myrissa are terminated with `end;` (except `repeat...until`). No parentheses are required around conditions.
 
-```
-routine add(const a: int32; const b: int32): int32;
-begin
-  return a + b;
+#### if / then / else / end
+
+```myr
+if x > 0 then
+  println("positive");
 end;
 
-routine greet(const name: string);
-begin
-  println("Hello, " + name);
-end;
-```
-
-#### 📨 Parameter Modes
-
-| Mode | Description |
-|------|-------------|
-| `const` | Read-only (default convention) |
-| `var` | Pass by reference, caller sees modifications |
-| (none) | Value parameter |
-
-#### 🧺 Variadic Arguments
-
-Routines can accept a variable number of arguments using `...`:
-
-```
-routine print_all(...);
-var
-  i: int32;
-begin
-  for i := 0 to varargs.count - 1 do
-    println(varargs.next(string));
-  end;
-end;
-```
-
-Access variadic arguments through the `varargs` intrinsic:
-
-| Expression | Description |
-|------------|-------------|
-| `varargs.count` | Total number of variadic arguments |
-| `varargs.next(Type)` | Retrieve and consume the next argument as the given type |
-| `varargs.get(Index, Type)` | Retrieve the argument at `Index` as the given type (no cursor advance) |
-| `varargs.reset()` | Reset the cursor back to the first argument |
-| `varargs.copy()` | Copy the current varargs cursor position |
-
-#### 🌉 External Routines
-
-Call functions from DLLs by declaring routines with an `external` clause:
-
-```
-routine MessageBoxA(const hwnd: pointer; const text: string;
-  const caption: string; const flags: uint32): int32;
-  external "user32.dll";
-
-MessageBoxA(nil, "Hello from Myrissa!", "Greeting", 0);
-```
-
-The value after `external` can also be an **identifier** naming a module-level string constant; the constant's value is used as the library name. This keeps the library name in one place across many external declarations:
-
-```
-public const DLL_NAME: string = "raylib";
-
-routine InitWindow(const width: int32; const height: int32;
-  const title: pointer); external DLL_NAME;
-```
-
-**Extension resolution rules** for the library name:
-
-- `.lib` / `.a` -- static import library.
-- `.dll` / `.so` / `.so.<version>` -- dynamic import.
-- **Extensionless** -- the library search paths are probed for a static library first; if found, static import. Otherwise dynamic: on linux64 the search paths are probed for `lib<n>.so.<version>`, `lib<n>.so`, then `<n>.so` (the found filename becomes the runtime dependency); if no probe hits, the target's default shared-library extension is appended.
-
-An extensionless name like `DLL_NAME = "raylib"` therefore resolves correctly on both targets from a single binding.
-
-#### 🔗 C++ Linkage and Overloading
-
-Use `cpplink` when a routine needs C++-compatible linkage with Itanium ABI name mangling. This enables routine overloading and interoperability with C++ libraries:
-
-```
-routine cpplink add(const x: int32; const y: int32): int32;
-begin
-  return x + y;
-end;
-
-routine cpplink add(const x: float64; const y: float64): float64;
-begin
-  return x + y;
-end;
-```
-
-Overloaded routines with `cpplink` can be exported from and imported into `.dll` and `.lib` files. Without `cpplink`, routines use C calling convention and naming, which does not support overloading.
-
-#### ☎️ Routine Types
-
-Routines are first-class types. Declare a routine type and use it as a callback or function pointer:
-
-```
-type
-  TCompareFunc = routine(const a: int32; const b: int32): int32;
-
-routine compare_ascending(const a: int32; const b: int32): int32;
-begin
-  return a - b;
-end;
-
-var
-  cmp: TCompareFunc;
-begin
-  cmp := compare_ascending;
-  println(cmp(3, 7));
-end;
-```
-
-> [!TIP]
-> Routine types use C calling convention by default. Add `cpplink` for C++ ABI compatibility.
-
-
-### 🚦 Control Flow
-
-#### 🔀 If/Else
-
-```
 if x > 0 then
   println("positive");
 else
@@ -771,740 +735,715 @@ else
 end;
 ```
 
-The `else` branch is optional. There is no `elif` -- use nested `if` inside `else`:
+#### while / do / end
 
-```
-if x > 0 then
-  println("positive");
-else
-  if x < 0 then
-    println("negative");
-  else
-    println("zero");
-  end;
+```myr
+while x > 0 do
+  x -= 1;
 end;
 ```
 
-#### 🔁 While Loop
+#### for / to / downto / do / end
 
-```
-var i: int32 = 0;
-while i < 10 do
-  println(i);
-  i += 1;
+```myr
+for i := 1 to 10 do
+  println("%d", i);
+end;
+
+for i := 10 downto 1 do
+  println("%d", i);
 end;
 ```
 
-#### 🔂 For Loop
+The iterator variable must be declared before the loop. `continue` performs the iterator step before re-testing the condition.
 
-```
-for i := 0 to 9 do
-  println(i);
-end;
+#### repeat / until
 
-for i := 9 downto 0 do
-  println(i);
-end;
-```
-
-The loop variable is declared implicitly by the `for` statement.
-
-#### 🔄 Repeat/Until
-
-```
-var i: int32 = 0;
+```myr
 repeat
-  println(i);
-  i += 1;
-until i >= 10;
+  x += 1;
+until x >= 10;
 ```
 
-The body executes at least once. The loop exits when the condition becomes true.
+The body executes at least once. Note: `repeat...until` does **not** use `end;` -- the `until` keyword closes the loop.
 
-#### ⏭️ Break and Continue
+#### match / of / end
 
-`break` exits the innermost loop immediately; `continue` skips to the next
-iteration. Both are valid only inside a `while`, `for`, or `repeat` body --
-using them anywhere else is a compile error. In a `for` loop, `continue`
-still performs the iterator step before the bound is re-tested.
-
-```
-// Find the first index of a value; stop scanning once found
-var found: int32 = -1;
-for i := 0 to 9 do
-  if data[i] = target then
-    found := i;
-    break;
-  end;
-end;
-
-// Sum only even numbers
-var sum: int32 = 0;
-for i := 0 to 100 do
-  if (i mod 2) <> 0 then
-    continue;
-  end;
-  sum += i;
-end;
-```
-
-#### 🎯 Match Statement
-
-Use `match` for value-based branching. Match arms can contain single values, comma-separated values, or ranges:
-
-```
+```myr
 match value of
   1: println("one");
-  2: println("two");
-  3..5: println("three to five");
-  else
-    println("other");
+  2, 3: println("two or three");
+  4..10: println("four through ten");
+else
+  println("something else");
 end;
 ```
 
-Multiple values can share a case:
+`match` supports single values, comma-separated value lists, and ranges (`low..high`). The `else` branch handles values not matched by any case.
 
-```
-match ch of
-  "a", "e", "i", "o", "u": println("vowel");
-  else
-    println("consonant");
+#### break and continue
+
+```myr
+while true do
+  if done then
+    break;                   // exit innermost loop
+  end;
+  if skip then
+    continue;                // next iteration
+  end;
+  // ...
 end;
 ```
 
-### 📋 Records
+Both are valid only inside `while`, `for`, and `repeat` loops.
 
-Records are value types with named fields. They are useful for compact structured data, binary layouts, and C interop:
+### ⚠️ Exception Handling
 
-```
-type
-  Point = record
-    x: float32;
-    y: float32;
-  end;
+#### guard / except / finally / end
 
-var p: Point;
-p.x := 10.0;
-p.y := 20.0;
-```
-
-#### 🧬 Record Inheritance
-
-Records can inherit from a base record:
-
-```
-type
-  Shape = record
-    x: int32;
-    y: int32;
-  end;
-
-  Circle = record(Shape)
-    radius: float32;
-  end;
-
-var c: Circle;
-c.x := 100;
-c.y := 200;
-c.radius := 50.0;
-```
-
-#### 📦 Packed Records
-
-Use `record packed` when fields must be stored without padding between them:
-
-```
-type
-  Header = record packed
-    magic: uint16;
-    version: uint8;
-    flags: uint8;
-  end;
-```
-
-#### 📐 Custom Alignment
-
-```
-type
-  AlignedData = record align(16)
-    values: array[4] of float32;
-  end;
-```
-
-#### 🧩 Bit Fields
-
-Fields can specify a bit width for compact binary layouts:
-
-```
-type
-  Flags = record packed
-    visible: uint8 : 1;
-    enabled: uint8 : 1;
-    priority: uint8 : 3;
-    reserved: uint8 : 3;
-  end;
-```
-
-#### 📝 Record Literals
-
-Construct records inline:
-
-```
-type
-  Color = record
-    r: uint8;
-    g: uint8;
-    b: uint8;
-  end;
-
-var red: Color = Color(r: 255, g: 0, b: 0);
-```
-
-
-### 📚 Arrays
-
-Fixed-size arrays declare their element count or explicit bounds at compile time:
-
-```
-var numbers: array[10] of int32;
-numbers[0] := 42;
-numbers[9] := 100;
-```
-
-Arrays can also use explicit range bounds:
-
-```
-var grid: array[0..7] of int32;
-```
-
-#### 📈 Dynamic Arrays
-
-Arrays declared without bounds are dynamic:
-
-```
-var items: array of int32;
-setlength(items, 10);
-items[0] := 42;
-println(len(items));    // 10
-```
-
-Use `setlength` to resize and `len` to query the current length.
-
-
-### 🎛️ Choices (Enumerations)
-
-Myrissa uses `choices` for enumeration-style values:
-
-```
-type
-  TColor = choices(Red = 0, Green = 1, Blue = 2);
-  TDirection = choices(North, South, East, West);
-```
-
-Choices values can be assigned explicit integer values. Access values with type qualification:
-
-```
-var c: TColor;
-c := TColor.Green;
-println("%d", int32(c));   // prints 1
-
-match int32(c) of
-  0: println("red");
-  1: println("green");
-  2: println("blue");
-end;
-```
-
-
-### 🧮 Sets
-
-Sets represent compact collections of values and are tested with the `in` operator:
-
-```
-var s: set;
-s := [1, 3, 5, 7];
-if 3 in s then
-  println("3 is in set");
-end;
-if not (4 in s) then
-  println("4 is not in set");
-end;
-```
-
-Sets can also be declared with explicit ranges:
-
-```
-type
-  CharSet = set of 0..255;
-```
-
-Set literals use square brackets with optional ranges:
-
-```
-var digits: set = [0..9];
-var evens: set = [0, 2, 4, 6, 8];
-```
-
-Use the `in` operator to test membership.
-
-
-### 🧊 Overlays (Unions)
-
-Overlays share storage between fields. They are Myrissa's union-style data structure:
-
-```
-type
-  Value = overlay
-    as_int: int32;
-    as_float: float32;
-    as_bytes: array[4] of uint8;
-  end;
-
-var v: Value;
-v.as_int := 42;
-println(v.as_bytes[0]);   // low byte of 42
-```
-
-#### 👻 Anonymous Overlays in Records
-
-Overlays can nest inside records for C-style union-in-struct patterns:
-
-```
-type
-  Variant = record
-    kind: int32;
-    overlay
-      int_val: int64;
-      float_val: float64;
-      str_val: string;
-    end;
-  end;
-```
-
-
-### 🏛️ Objects
-
-Objects are heap-allocated reference types with methods, create/destroy lifecycle management, and single inheritance. Objects are always used through typed pointers; the `.` operator auto-dereferences object pointers:
-
-```
-type
-  TCounter = object
-    value: int32;
-
-    method increment();
-    begin
-      self.value := self.value + 1;
-    end;
-
-    method get_value(): int32;
-    begin
-      return self.value;
-    end;
-  end;
-
-var c: pointer to TCounter;
-begin
-  create(c);
-  c.value := 0;
-  c.increment();
-  c.increment();
-  println("count: %d", c.get_value());   // count: 2
-  destroy(c);
-end;
-```
-
-#### 🧬 Object Inheritance
-
-```
-type
-  TBase = object
-    x: int32;
-
-    method get_x(): int32;
-    begin
-      return self.x;
-    end;
-
-    method describe(): int32;
-    begin
-      return self.x * 10;
-    end;
-  end;
-
-  TDerived = object(TBase)
-    y: int32;
-
-    method sum(): int32;
-    begin
-      return self.x + self.y;
-    end;
-
-    method describe(): int32;
-    begin
-      return parent.describe() + self.y;
-    end;
-  end;
-
-var d: pointer to TDerived;
-begin
-  create(d);
-  d.x := 7;
-  d.y := 3;
-  println("describe: %d", d.describe());   // parent.describe() + y = 73
-  destroy(d);
-end;
-```
-
-Use `self` to access the current object's fields and methods. Use `parent` to call the base object's methods.
-
-#### ♻️ Object Lifecycle
-
-| Statement | Description |
-|-----------|-------------|
-| `create(obj)` | Allocate and initialize an object instance |
-| `destroy(obj)` | Finalize and free an object instance |
-
-> [!WARNING]
-> Objects are always declared as `pointer to TMyObject` and allocated with `create`. Every `create` must have a matching `destroy` to avoid memory leaks.
-
-
-### 📍 Pointers
-
-Myrissa supports typed and untyped pointers for low-level memory access:
-
-```
-type
-  PInt32 = pointer to int32;
-
-var
-  x: int32 = 42;
-  p: PInt32;
-begin
-  p := address of x;
-  println(p^);           // dereference: prints 42
-  p^ := 100;            // write through pointer
-  println(x);            // prints 100
-```
-
-| Operation | Syntax | Description |
-|-----------|--------|-------------|
-| Address-of | `address of expr` | Get a pointer to a variable |
-| Dereference | `expr^` | Follow a pointer to its value |
-
-Const pointers prevent writes through the pointer:
-
-```
-type
-  PConstInt = pointer to const int32;
-```
-
-
-### 🧠 Memory Management
-
-Myrissa provides direct memory-management intrinsics for object allocation, raw blocks, and dynamic arrays:
-
-| Statement | Description |
-|-----------|-------------|
-| `getmem(ptr)` | Allocate a block of memory |
-| `freemem(ptr)` | Free a previously allocated block |
-| `resizemem(ptr, size)` | Resize an allocated block |
-| `setlength(arr, size)` | Resize a dynamic array |
-
-
-### 🛡️ Exception Handling
-
-Myrissa uses `guard/except/finally` for structured exception handling:
-
-```
+```myr
 guard
-  println("in guard");
-finally
-  println("finally runs always");
-end;
-```
-
-With exception catching:
-
-```
-guard
-  println("before throw");
-  throw(42);
-  println("this never runs");
+  // protected code
 except
-  println("caught exception");
+  println("error: code=%lld, msg=%s", exccode(), excmsg());
+finally
+  // always runs, even if no exception
 end;
-
-println("continues after guard");
 ```
 
-| Keyword | Description |
-|---------|-------------|
-| `guard` | Begins a protected block |
-| `except` | Handles exceptions from the guard block |
-| `finally` | Cleanup code that always runs (with or without exception) |
-| `throw(expr)` | Raise an exception |
-| `throwcode(code, msg)` | Raise an exception with a numeric code and message |
-| `exccode()` | Get the exception code (inside `except` block) |
-| `excmsg()` | Get the exception message (inside `except` block) |
+You can use `except` only, `finally` only, or both. The `guard` block catches both software exceptions (`throw`/`throwcode`) and hardware exceptions (division by zero, access violations, stack overflow, etc.).
 
-> [!NOTE]
-> A `guard` block requires either `except` or `finally` (or both). When both are present, `except` comes first.
+#### throw / throwcode
 
-
-### ⚡ Intrinsics
-
-Intrinsics are built-in operations recognized directly by the compiler:
-
-| Intrinsic | Description |
-|-----------|-------------|
-| `len(expr)` | Length of a string, wide string, or dynamic array |
-| `size(Type)` | Byte size of a type or expression |
-| `utf8(wideStr)` | Convert a wide string to a newly allocated raw UTF-8 buffer (`char*`). The caller owns the buffer |
-| `cstr(str)` | Borrowed raw UTF-8 `char*` into an existing string's own storage. Allocates nothing, must never be freed, valid only while the string is alive |
-| `wstr(str)` | Borrowed UTF-16 `wchar*` of a string. The runtime widens once and caches the buffer on the string itself, so repeat calls are free and it must never be freed by the caller |
-| `paramcount()` | Number of command-line arguments |
-| `paramstr(n)` | Get command-line argument by index |
-| `print(...)` | Print values without newline |
-| `println(...)` | Print values with newline |
-
-
-### 🧱 Modules
-
-Every Myrissa source file is a module. The module declaration specifies what the compiler should produce and what the module is called:
-
+```myr
+throw("something went wrong");          // code defaults to 1 (RT_EXC_SOFTWARE)
+throwcode(42, "custom error");           // user-defined error code
 ```
-module exe myapp;
 
-// declarations...
+#### Exception Intrinsics
 
+| Intrinsic | Returns | Description |
+|-----------|---------|-------------|
+| `exccode()` | `int32` | Error code of the last exception |
+| `excmsg()` | `string` | Error message of the last exception |
+
+### 🔧 Routines
+
+Routines are declared with the `routine` keyword. A routine without a return type is a procedure; with a return type it is a function.
+
+#### Procedures
+
+```myr
+routine greet(const name: string);
 begin
-  // entry point
-  println("Hello!");
-end.
+  println("Hello, %s!", cstr(name));
+end;
 ```
 
-#### 🧭 Module Kinds
+#### Functions
 
-| Kind | Description | Output |
-|------|-------------|--------|
-| `exe` | Standalone executable | `.exe` |
-| `dll` | Dynamic link library | `.dll` |
-| `lib` | Static library | `.lib` |
-| `unit` | Reusable module (compiled inline into importer) | (none) |
-
-#### 📥 Imports and Module Qualification
-
-Import other modules with the `import` statement. All imported symbols must be accessed with full module qualification:
-
-```
-module exe main;
-
-import mathutils;
-
-begin
-  println(mathutils.add(2, 3));
-end.
-```
-
-> [!IMPORTANT]
-> Unqualified access to imported symbols is a compile error. If modules A and B both export `Foo`, they are accessed as `A.Foo` and `B.Foo` -- no ambiguity.
-
-#### 👁️ Visibility
-
-Declarations can be marked `public` to make them accessible from importing modules:
-
-```
-public routine add(const a: int32; const b: int32): int32;
+```myr
+routine add(a: int32; b: int32): int32;
 begin
   return a + b;
 end;
 ```
 
-Declarations without `public` are private to the module.
+> [!IMPORTANT]
+> 🧱 Parameters are separated by semicolons (`;`), not commas. Use `return` to return a value from a function.
 
-#### 🚪 Initialize and Finalize
+#### Parameter Modifiers
 
-Modules can have lifecycle hooks that run at startup and shutdown:
+| Modifier | Behavior | When to Use |
+|----------|----------|-------------|
+| *(none)* | Pass by value | Default -- caller's value is copied |
+| `const` | Immutable by value | When the routine should not modify the parameter |
+| `var` | Pass by reference | When the routine needs to modify the caller's variable |
 
+```myr
+routine swap(var a: int32; var b: int32);
+var temp: int32;
+begin
+  temp := a;
+  a := b;
+  b := temp;
+end;
 ```
-module exe myapp;
+
+> [!NOTE]
+> 📌 `const` parameters are immutable copies (pass by value), the same as in Delphi. They are **not** passed by reference.
+
+#### Local Declarations
+
+Routines can contain their own `const`, `type`, and `var` sections:
+
+```myr
+routine compute(): int32;
+const
+  LOCAL_CONST: int32 = 10;
+type
+  LocalRec = record val: int32; end;
+var
+  x: int32;
+begin
+  x := LOCAL_CONST * 2;
+  return x;
+end;
+```
+
+#### Overloading
+
+Routines can be overloaded by parameter types. Overloaded routines require `cpplink` linkage:
+
+```myr
+routine cpplink add(a: int32; b: int32): int32;
+begin return a + b; end;
+
+routine cpplink add(a: float64; b: float64): float64;
+begin return a + b; end;
+```
+
+If you omit `cpplink` on an overloaded routine, the compiler will auto-promote it with a warning.
+
+#### Forward Declarations
+
+Declare a routine's signature before its implementation:
+
+```myr
+forward routine my_func(a: int32): int32;
+
+// ... other code ...
+
+routine my_func(a: int32): int32;
+begin
+  return a * 2;
+end;
+```
+
+The full declaration must appear later in the same module.
+
+### 🔠 Type Declarations
+
+Use the `type` section to declare type aliases, records, choices, and other named types:
+
+```myr
+type
+  Age = int32;                     // type alias
+  IntPtr = pointer to int32;       // typed pointer
+  ConstPtr = pointer to const int32;
+  Callback = routine(x: int32): int32;  // routine type (function pointer)
+```
+
+#### Forward Type Declarations
+
+Forward-declared types can only be used in `pointer to` contexts until fully defined:
+
+```myr
+forward type MyRecord;
+
+type
+  MyRecordPtr = pointer to MyRecord;   // OK -- pointer context
+
+// Full declaration must appear later:
+type
+  MyRecord = record
+    val: int32;
+  end;
+```
+
+### 🔤 Type Casts
+
+Explicit type conversions use the target type as a function:
+
+```myr
+var x: int64 = 12345;
+var y: int32 = int32(x);        // narrow cast
+var f: float64 = 3.14;
+var i: int32 = int32(f);        // float to int (truncates)
+```
+
+#### Type Promotion Rules
+
+When mixing types in expressions, the compiler promotes automatically:
+
+| Expression | Result Type |
+|------------|-------------|
+| `int` + `float` | `float` (int promoted) |
+| `smaller int` + `larger int` | larger int |
+| `float32` + `float64` | `float64` |
+| boolean ops (`and`, `or`, `xor`, `not`) | `boolean` |
+| comparisons (`=`, `<>`, `<`, etc.) | `boolean` |
+| `string` + `string` | same string type |
+
+### 💬 Comments
+
+```myr
+// This is a line comment
+
+/* This is a block comment.
+   Block comments can span multiple lines.
+   /* They can also be nested. */
+*/
+```
+
+Myrissa supports `//` line comments and `/* */` block comments. Block comments are nestable. The Pascal-style `{ }` and `(* *)` comment forms are **not** supported.
+
+### 📊 Intrinsic Functions
+
+These built-in functions are available without imports:
+
+#### Value Intrinsics
+
+| Intrinsic | Description | Example |
+|-----------|-------------|---------|
+| `len(expr)` | Length of string, wstring, or dynamic array | `len("hello")` returns 5 |
+| `size(type_or_expr)` | Byte size of a type or expression | `size(int32)` returns 4 |
+| `paramcount()` | Number of CLI arguments (excludes program name) | `paramcount()` |
+| `paramstr(index)` | CLI argument by index (0 = program name) | `paramstr(0)` |
+| `exccode()` | Last exception code | `exccode()` |
+| `excmsg()` | Last exception message | `excmsg()` |
+
+#### String Conversion Intrinsics
+
+| Intrinsic | Description | Example |
+|-----------|-------------|---------|
+| `utf8(wstring)` | Convert wstring to owned UTF-8 buffer | `utf8(ws)` |
+| `cstr(string)` | Borrowed raw `char*` into managed string | `cstr(s)` |
+| `wstr(string)` | Borrowed `wchar*` with runtime caching | `wstr(s)` |
+
+#### Statement-Level Intrinsics
+
+These appear as statements, not expressions:
+
+| Intrinsic | Description | Example |
+|-----------|-------------|---------|
+| `new(ptr)` | Allocate and default-construct typed pointer | `new(p)` |
+| `dispose(ptr)` | Free typed pointer and set to nil | `dispose(p)` |
+| `getmem(ptr)` | Allocate raw memory | `getmem(buf)` |
+| `freemem(ptr)` | Free raw memory | `freemem(buf)` |
+| `resizemem(ptr, size)` | Resize raw memory | `resizemem(buf, 1024)` |
+| `setlength(arr, count)` | Resize dynamic array | `setlength(arr, 10)` |
+
+#### Output Intrinsics
+
+| Intrinsic | Description | Example |
+|-----------|-------------|---------|
+| `print(fmt, args...)` | Formatted output, no newline | `print("x=%d", x)` |
+| `println(fmt, args...)` | Formatted output with newline | `println("x=%d", x)` |
+
+Output uses C `printf` format specifiers: `%d` for 32-bit integers, `%lld` for 64-bit integers, `%f` / `%g` / `%e` for floats, `%s` for a `const char*`. Pass a managed `string` through `cstr()` to print it with `%s`.
+
+### 🔗 Conditional Compilation
+
+Myrissa supports compile-time conditional compilation with `@` directives. These are processed at the parser level and do **not** end with semicolons:
+
+```myr
+@define MY_FEATURE
+
+@ifdef MY_FEATURE
+  println("feature enabled");
+@endif
+
+@ifndef SOME_FLAG
+  println("flag not set");
+@endif
+
+@ifdef TARGET_WIN64
+  println("Windows");
+@elseif TARGET_LINUX64
+  println("Linux");
+@else
+  println("Unknown platform");
+@endif
+```
+
+#### Directive Reference
+
+| Directive | Purpose |
+|-----------|---------|
+| `@define SYMBOL` | Define a compilation symbol |
+| `@undef SYMBOL` | Undefine a compilation symbol |
+| `@ifdef SYMBOL` | Compile if symbol is defined |
+| `@ifndef SYMBOL` | Compile if symbol is not defined |
+| `@else` | Alternate branch |
+| `@elseif SYMBOL` | Alternate branch with condition |
+| `@endif` | End conditional block |
+
+Conditional blocks can be nested.
+
+#### Predefined Symbols
+
+| Symbol | When Defined |
+|--------|-------------|
+| `MYRISSA` | Always |
+| `CPUX64` | Always |
+| `APPTYPE_CONSOLE` | Always |
+| `WINDOWS`, `MSWINDOWS`, `WIN64`, `TARGET_WIN64` | Windows target |
+| `LINUX`, `TARGET_LINUX64` | Linux target |
+| `DEBUG` | Debug builds (optimization = none) |
+| `RELEASE` | Release builds (any optimization) |
+| `BUILD_EXE` | Module kind is exe |
+| `BUILD_DLL` | Module kind is dll |
+| `BUILD_LIB` | Module kind is lib |
+
+### 📋 Module-Level Directives
+
+These directives configure the build at the module level and end with a semicolon:
+
+| Directive | Value | Purpose |
+|-----------|-------|---------|
+| `@target` | `win64` or `linux64` | Set compilation target |
+| `@optimize` | `debug`, `none`, `basic`, `full` | Optimization level |
+| `@subsystem` | `console` or `gui` | Application subsystem |
+| `@outputpath` | `"path"` | Output directory |
+| `@modulepath` | `"path"` | Module search path |
+| `@librarypath` | `"path"` | Library search path |
+| `@includepath` | `"path"` | Include search path |
+| `@addlinklibrary` | `"path"` | Link additional library |
+| `@copydll` | `"path"` | Copy DLL/SO to output on build |
+| `@resfile` | `"path"` | Compiled resource file to link |
+| `@exeicon` | `"path"` | Application icon (Windows EXE only) |
+| `@unittestmode` | `on` or `off` | Enable test compilation |
+| `@breakpoint` | *(none)* | Set debugger breakpoint |
+| `@message` | `hint\|warn\|error\|fatal "text"` | Compile-time diagnostic |
+
+#### Path Prefixes
+
+| Prefix | Base Directory |
+|--------|---------------|
+| `$P:` | Compiler executable directory |
+| `$D:` | Current working directory |
+| `$S:` | Declaring module's directory (default) |
+
+#### Version Info Directives
+
+For Windows executables, you can embed version information:
+
+```myr
+@addverinfo on;
+@vimajor 1;
+@viminor 0;
+@vipatch 0;
+@viproductname "My Application";
+@videscription "A Myrissa application";
+@vifilename "myapp.exe";
+@vicompanyname "My Company";
+@vicopyright "Copyright 2026";
+```
+
+### 🧪 Testing
+
+Myrissa has built-in testing support. Enable it with `@unittestmode on;` and place test blocks after the module's `end.`:
+
+```myr
+module exe mylib;
+@unittestmode on;
+
+routine double(const n: int32): int32;
+begin
+  return n * 2;
+end;
+
+end.
+
+test "double returns correct values"
+begin
+  asserteq(4, double(2));
+  asserteq(0, double(0));
+  asserteq(-6, double(-3));
+end;
+```
+
+When `@unittestmode` is on, the test runner replaces the normal program entry point.
+
+#### Assertion Functions
+
+| Assertion | Purpose | Example |
+|-----------|---------|---------|
+| `assert(expr)` | Fail if false | `assert(x > 0)` |
+| `asserttrue(expr)` | Fail if not true | `asserttrue(flag)` |
+| `assertfalse(expr)` | Fail if not false | `assertfalse(err)` |
+| `asserteq(expected, actual)` | Fail if not equal | `asserteq(5, result)` |
+| `asserteqf(expected, actual, epsilon)` | Float equality within tolerance | `asserteqf(3.14, pi, 0.01)` |
+| `assertnil(expr)` | Fail if not nil | `assertnil(p)` |
+| `assertnotnil(expr)` | Fail if nil | `assertnotnil(p)` |
+| `assertfail("msg")` | Unconditional failure | `assertfail("not done")` |
+
+All assertions are non-aborting -- failures accumulate and are reported at the end of the test run.
+
+> [!TIP]
+> 💡 Test blocks can include their own `var` sections for local variables. Each test runs independently.
+
+### 📎 Complete Example
+
+Here is a complete program demonstrating variables, constants, routines, control flow, and output:
+
+```myr
+module exe demo;
+
+const
+  MAX_ITEMS: int32 = 5;
+
+routine factorial(n: int32): int32;
+var
+  result: int32 = 1;
+  i: int32;
+begin
+  for i := 1 to n do
+    result *= i;
+  end;
+  return result;
+end;
+
+routine classify(n: int32): string;
+begin
+  match n of
+    0: return "zero";
+    1..9: return "single digit";
+    10..99: return "double digit";
+  else
+    return "large";
+  end;
+end;
+
+begin
+  var i: int32;
+  for i := 0 to MAX_ITEMS do
+    println("%d! = %d, classified as: %s",
+      i, factorial(i), cstr(classify(i)));
+  end;
+end.
+```
+
+> [!TIP]
+> 💡 Continue to [Module System](#module-system) for imports, visibility, and multi-module projects, or jump to [C Interop](#c-interop) to start calling C libraries.
+
+<a id="module-system"></a>
+
+## 📦 Module System
+
+Myrissa organizes code into modules. Every `.myr` source file is a module, and the first line declares what kind of module it is. Modules can import other modules, control which symbols are visible to importers, and define startup/shutdown logic.
+
+> [!TIP]
+> 💡 All imported symbols must be fully qualified with the module name: `myunit.my_func()`, not just `my_func()`. This keeps code explicit and avoids name collisions across modules.
+
+### 📝 Module Declaration
+
+Every `.myr` file begins with a module declaration:
+
+```myr
+module <kind> <name>;
+```
+
+The kind comes first, then the name. The name must match the filename (without the `.myr` extension). For example, a file named `mathlib.myr` must declare `module unit mathlib;`.
+
+### 🏗️ Module Kinds
+
+Myrissa has four module kinds, each producing a different output:
+
+| Kind | Output | Main Body | Use Case |
+|------|--------|-----------|----------|
+| `exe` | Native executable | `begin...end.` | Standalone programs |
+| `dll` | Shared library (.dll/.so) | `end.` (no main body) | Dynamically loaded libraries |
+| `lib` | Static library (.a/.lib) | `end.` (no main body) | Statically linked libraries |
+| `unit` | Compiled inline | `end.` (no main body) | Reusable code imported into other modules |
+
+> [!NOTE]
+> The kind keywords (`exe`, `dll`, `lib`, `unit`) are contextual -- they are ordinary identifiers everywhere except in the module declaration position.
+
+#### Executable Module
+
+An `exe` module is a standalone program with a `begin...end.` main body:
+
+```myr
+module exe hello;
+
+begin
+  println("Hello, Myrissa!");
+end.
+```
+
+The `begin...end.` block is the program entry point. Only `exe` modules have a main body.
+
+#### Unit Module
+
+A `unit` module contains reusable declarations (routines, types, constants, variables) that other modules can import:
+
+```myr
+module unit mathlib;
+
+public routine add(a: int32; b: int32): int32;
+begin
+  return a + b;
+end;
+
+public routine multiply(a: int32; b: int32): int32;
+begin
+  return a * b;
+end;
+
+end.
+```
+
+Units are compiled inline -- their code is incorporated directly into the importing module's output. There is no separate compiled artifact.
+
+#### DLL Module
+
+A `dll` module produces a shared library (`.dll` on Windows, `.so` on Linux):
+
+```myr
+module dll mylib;
+
+public routine clink my_func(const x: int32): int32;
+begin
+  return x * 2;
+end;
 
 initialize
-  println("Starting up...");
+  println("dll loaded");
+end;
+
+end.
+```
+
+DLL routines that should be callable from other programs or languages need the `clink` (or `cpplink`) linkage specifier and `public` visibility.
+
+#### Static Library Module
+
+A `lib` module produces a static library (`.lib` on Windows, `.a` on Linux):
+
+```myr
+module lib mystaticlib;
+
+public routine clink helper(const x: int32): int32;
+begin
+  return x + 1;
+end;
+
+end.
+```
+
+Static libraries are linked directly into the consuming executable at build time.
+
+### 📥 Imports
+
+Modules import other modules with the `import` declaration:
+
+```myr
+import mathlib;
+import utils, helpers;   // comma-separated
+```
+
+Import declarations appear after the module declaration and before any other declarations. The compiler resolves imported modules by searching for the corresponding `.myr` file.
+
+#### Module Search Paths
+
+The compiler searches for imported modules in this order:
+
+1. The directory containing the importing module
+2. Paths added via `@modulepath "path";` directives
+3. The compiler's built-in search paths
+
+Use `@modulepath` to add custom search directories:
+
+```myr
+@modulepath "$S:../shared";   // relative to the source file
+@modulepath "$P:lib";         // relative to the compiler executable
+```
+
+| Path Prefix | Base Directory |
+|-------------|----------------|
+| `$S:` | Declaring module's directory (default) |
+| `$P:` | Compiler executable directory |
+| `$D:` | Current working directory |
+
+### 🔒 Visibility
+
+By default, all declarations in a module are private -- visible only within that module. The `public` keyword makes a declaration visible to importing modules:
+
+```myr
+// Visible to importers
+public const MAX_SIZE: int32 = 1024;
+public type Point = record x: int32; y: int32; end;
+public routine calculate(a: int32): int32;
+begin return a * 2; end;
+public var globalCounter: int32;
+
+// Private (default) -- not visible to importers
+const INTERNAL_LIMIT: int32 = 50;
+type InternalState = record val: int32; end;
+routine helper(): int32;
+begin return 0; end;
+var scratch: int32;
+```
+
+The `public` keyword applies to constants, types, routines, and variables.
+
+### 🔗 Cross-Module Symbol Access
+
+All symbols from imported modules must be accessed with full module qualification:
+
+```myr
+module exe main;
+import mathlib;
+
+begin
+  var result: int32 = mathlib.add(10, 20);
+  println("sum = %d", result);
+
+  var p: mathlib.Point;
+  p.x := 5;
+  p.y := 10;
+
+  println("max = %d", mathlib.MAX_SIZE);
+end.
+```
+
+Unqualified access to imported symbols is a compile error. This is intentional -- it prevents ambiguity when multiple imports export symbols with the same name, and it makes every reference self-documenting.
+
+> [!IMPORTANT]
+> There is no `use` or `from X import Y` syntax. You always write `module.symbol`. This keeps the origin of every symbol immediately visible in the source.
+
+### 🚀 Initialize and Finalize
+
+Modules can define startup and shutdown blocks that run automatically:
+
+```myr
+module unit resources;
+
+var handle: int32;
+
+public routine get_handle(): int32;
+begin return handle; end;
+
+initialize
+  handle := 42;
+  println("resources initialized");
 end;
 
 finalize
-  println("Shutting down...");
+  handle := 0;
+  println("resources cleaned up");
 end;
 
-begin
-  println("Main body");
 end.
 ```
 
-`initialize` runs before the main body. `finalize` runs after the main body completes. Both are optional and supported on all module kinds.
+- **`initialize`** runs at program startup, before the `begin...end.` main body of the `exe` module. For imported units, initialization runs in dependency order -- if module A imports module B, B's `initialize` runs before A's.
 
+- **`finalize`** runs at program shutdown, after the main body completes. Finalization runs in reverse dependency order -- if module A imports module B, A's `finalize` runs before B's.
 
-### 🎛️ Directives
+Both blocks are optional. All four module kinds (`exe`, `dll`, `lib`, `unit`) support `initialize` and `finalize`.
 
-Directives are compile-time instructions prefixed with `@`. Every directive is terminated by `;`, with one exception: the seven conditional-compilation directives (`@define`, `@undef`, `@ifdef`, `@ifndef`, `@elseif`, `@else`, `@endif`) take no terminator. Enumerated values (like `console` or `full`) are written as bare identifiers; quoted strings are reserved for paths and free text.
-
-#### 📄 Module Directives
-
-| Directive | Description |
-|-----------|-------------|
-| `@exeicon "path";` | Set the application icon (Windows EXE only) |
-| `@resfile "path";` | Link a compiled resource file (.res) |
-| `@outputpath "path";` | Set the output directory |
-| `@copydll "path";` | Copy a DLL/shared library to the output directory during build |
-| `@linklibrary "path";` | Link an additional static or shared library into the output |
-| `@libpath "path";` | Add a library search path |
-| `@modulepath "path";` | Add a module (unit) search path |
-| `@includepath "path";` | Add an include search path |
-| `@subsystem <mode>;` | Set the application subsystem to `console` (default) or `gui`. Windows-only: on linux64 it produces a warning and is ignored |
-| `@target <platform>;` | Set the compilation target to `win64` (default) or `linux64`. Must appear in the root module |
-| `@optimize <level>;` | Set the optimization level: `debug`, `none`, `basic`, or `full` |
-| `@unittestmode <state>;` | Enable (`on`) or disable (`off`) test block compilation |
-
-#### 📁 Path Resolution
-
-Every directive that takes a `"path"` resolves it the same way. Absolute paths
-are used as-is. A relative path resolves against the directory of the module
-that declares it, so a module and the files it references travel together.
-
-An optional prefix overrides that base:
-
-| Prefix | Resolves against | Use for |
-|--------|------------------|---------|
-| `$P:` | Directory of the compiler executable | Assets shipped with the compiler |
-| `$D:` | Current working directory | Paths relative to where the compiler ran |
-| `$S:` | Declaring module's directory (the default, said out loud) | Mixed-base modules |
-
-The prefix is matched case-insensitively at the start of the string only.
-
-Use `$P:` in any module that will be imported from another folder. Without it,
-a vendor binding's `@copydll` resolves against the binding's own directory and
-breaks the moment the module is used from somewhere else:
-
-```
-@copydll "$P:res/libs/vendor/raylib/win64/raylib.dll";
-@libpath "$P:res/libs/vendor/raylib";
-@exeicon "$P:res/assets/icons/myrissa.ico";
-```
-
-
-#### 🏷️ Version Information Directives
-
-| Directive | Description |
-|-----------|-------------|
-| `@addverinfo <state>;` | Enable (`on`) or disable (`off`) version information embedding |
-| `@vimajor number;` | Major version number |
-| `@viminor number;` | Minor version number |
-| `@vipatch number;` | Patch version number |
-| `@viproductname "name";` | Product name |
-| `@videscription "text";` | File description |
-| `@vifilename "name";` | Original filename |
-| `@vicompanyname "name";` | Company name |
-| `@vicopyright "text";` | Copyright string |
-
-#### 🧾 Statement Directives
-
-| Directive | Description |
-|-----------|-------------|
-| `@breakpoint;` | Insert a debugger breakpoint (takes no value) |
-| `@message <severity> "text";` | Emit a compile-time diagnostic at severity `hint`, `warn`, `error`, or `fatal` |
-
-#### 📦 Using Vendor Library Bindings
-
-Generated vendor bindings are unit modules that declare the library's routines with `external DLL_NAME;` against a single `public const DLL_NAME: string = "...";`, and carry a target-conditional `@copydll` block in their own header:
-
-```
-module unit RayLib;
-
-@ifdef TARGET_WIN64
-  @copydll "$P:res/libs/vendor/raylib/win64/raylib.dll";
-@elseif TARGET_LINUX64
-  @copydll "$P:res/libs/vendor/raylib/linux64/libraylib.so.550";
-@else
-  @message error "RayLib: unsupported target";
-@endif
-
-public const
-  DLL_NAME: string = "raylib";
-```
-
-A consumer only adds the vendor folder to the search path and imports the binding module:
-
-```
-module exe demo;
-
-@libpath "$P:res/libs/vendor/raylib";
-@libpath "$P:res/libs/vendor/raylib/linux64";   // .so probing on linux64
-
-import RayLib;
-
-begin
-  RayLib.InitWindow(800, 600, utf8(w"Demo"));
-  // ...
-end.
-```
-
-The extensionless `DLL_NAME` resolves per target (see External Routines), the binding's target-conditional `@copydll` places the right shared library next to the output, and on linux64 the found `.so` filename becomes the runtime dependency, loaded from the executable's own directory.
-
-
-### 🔀 Conditional Compilation
-
-Conditional compilation lets a source file include or exclude code based on defined symbols:
-
-```
-@define VERBOSE
-
-@ifdef VERBOSE
-  println("Debug: entering main loop");
-@endif
-
-@ifdef TARGET_WIN64
-  println("Running on 64-bit Windows");
-@elseif TARGET_LINUX64
-  println("Running on 64-bit Linux");
-@endif
-```
-
-The conditional directives take no terminating semicolon. They also work inside imported unit modules, evaluated with the root module's defines (e.g. `TARGET_WIN64`), so a single unit can carry target-specific code for all importers.
-
-| Directive | Description |
-|-----------|-------------|
-| `@define SYM` | Define a symbol |
-| `@undef SYM` | Undefine a symbol |
-| `@ifdef SYM` | Compile if symbol is defined |
-| `@ifndef SYM` | Compile if symbol is not defined |
-| `@elseif SYM` | Alternative branch with condition |
-| `@else` | Alternative branch |
-| `@endif` | End conditional block |
-
-#### 🏁 Predefined Symbols
-
-| Symbol | Defined When |
-|--------|-------------|
-| `MYRISSA` | Always |
-| `CPUX64` | Always (x64-only architecture) |
-| `APPTYPE_CONSOLE` | Always |
-| `WINDOWS`, `MSWINDOWS`, `WIN64`, `TARGET_WIN64` | Target is `win64` |
-| `LINUX`, `TARGET_LINUX64` | Target is `linux64` |
-| `DEBUG` | Optimization level is `none` |
-| `RELEASE` | Optimization level is not `none` |
-| `BUILD_EXE` | Module kind is `exe` (or unknown) |
-| `BUILD_DLL` | Module kind is `dll` |
-| `BUILD_LIB` | Module kind is `lib` |
-
+> [!TIP]
+> 💡 Use `initialize` for one-time setup like opening files, allocating resources, or registering callbacks. Use `finalize` for cleanup like closing handles or freeing memory.
 
 ### 🧪 Unit Testing
 
-Test blocks appear after the module's `end.` marker and are compiled only when `@unittestmode on;` is active. In test mode, the compiler replaces the normal entry point with the test runner.
+Myrissa has built-in test support. Test blocks are defined after the module's `end.` terminator and are only compiled when unit test mode is enabled:
 
-```
-module exe mathlib;
-
+```myr
+module exe mylib;
 @unittestmode on;
 
 routine add(const a: int32; const b: int32): int32;
@@ -1512,67 +1451,996 @@ begin
   return a + b;
 end;
 
+routine multiply(const a: int32; const b: int32): int32;
+begin
+  return a * b;
+end;
+
 end.
 
 test "add returns correct sum"
-var
-  result: int32;
 begin
-  result := add(2, 3);
-  asserteq(5, result);
+  asserteq(5, add(2, 3));
+  asserteq(0, add(-5, 5));
+  asserteq(-8, add(-5, -3));
 end;
 
-test "add handles negatives"
+test "multiply works correctly"
 begin
-  asserteq(-2, add(-5, 3));
-  asserteq(-8, add(-5, -3));
+  asserteq(6, multiply(2, 3));
+  asserteq(0, multiply(0, 100));
 end;
 ```
 
-#### ✅ Assertion Functions
+#### Enabling Tests
 
-| Assertion | Description |
-|-----------|-------------|
-| `assert(expr)` | Fails if expression is false |
-| `asserttrue(expr)` | Fails if expression is not true |
-| `assertfalse(expr)` | Fails if expression is not false |
-| `asserteq(expected, actual)` | Fails if values are not equal (type-dispatched) |
-| `asserteqf(expected, actual, epsilon)` | Float equality within a tolerance; fails if the difference exceeds `epsilon` |
-| `assertnil(expr)` | Fails if expression is not nil |
-| `assertnotnil(expr)` | Fails if expression is nil |
-| `assertfail("message")` | Unconditional failure with a message |
+Add `@unittestmode on;` before any declarations. When enabled, the test runner replaces the normal entry point -- the `begin...end.` main body is not executed.
 
-All assertions continue after failure -- failures accumulate and are reported per test. The compiler injects source file and line number automatically.
+#### Test Block Syntax
+
+```myr
+test "descriptive test name"
+var
+  // optional local variables
+begin
+  // test body with assertions
+end;
+```
+
+Test blocks can contain local variable, constant, and type declarations before the `begin` keyword, just like routines.
+
+#### Assertion Functions
+
+| Function | Purpose |
+|----------|---------|
+| `assert(expr)` | Fail if `expr` is false |
+| `asserttrue(expr)` | Fail if not true |
+| `assertfalse(expr)` | Fail if not false |
+| `asserteq(expected, actual)` | Fail if not equal (type-dispatched) |
+| `asserteqf(expected, actual, epsilon)` | Float equality within tolerance |
+| `assertnil(expr)` | Fail if not nil |
+| `assertnotnil(expr)` | Fail if nil |
+| `assertfail("msg")` | Unconditional failure |
+
+All assertions are non-aborting -- a failed assertion records the failure but continues executing the test. Failures accumulate and are reported at the end.
+
+### 📋 Dependency Ordering
+
+The compiler automatically determines the correct order to process modules using topological sorting. If module A imports module B, the compiler ensures B is fully processed (parsed, analyzed) before A.
+
+Circular dependencies between modules are not allowed -- they produce a compile error.
+
+### 🔌 Consuming DLLs and Static Libraries
+
+#### Building and Consuming a DLL
+
+First, build the DLL module:
+
+```myr
+// mylib.myr
+module dll mylib;
+
+public routine clink double_it(const x: int32): int32;
+begin
+  return x * 2;
+end;
+
+end.
+```
+
+Build it: `myr mylib`
+
+Then consume it from an executable:
+
+```myr
+// app.myr
+module exe app;
+
+// Declare the external function, linking against "mylib"
+routine clink double_it(const x: int32): int32; external "mylib";
+
+begin
+  println("%d", double_it(21));   // prints 42
+end.
+```
+
+The `external "mylib"` clause tells the compiler to link against the `mylib` shared library. At runtime, the DLL/SO must be available in the system's library search path or alongside the executable.
 
 > [!TIP]
-> Test blocks have access to all module declarations. Use tests to verify routines, types, and module behavior without building a separate test harness.
+> 💡 Use `@copydll "path/to/mylib.dll";` in the consumer to automatically copy the DLL to the output directory during build.
 
-### 🧯 Practical Gotchas
+#### Building and Consuming a Static Library
 
-These are not new syntax rules. They are the small details that tend to matter most when reading or writing real Myrissa code.
+Build the static library:
 
-| Area | Watch For |
-|------|-----------|
-| 🧵 Strings | `string` and `wstring` are different widths. Use `w"..."` for wide strings. |
-| 🔤 Characters | `char` and `wchar` are assigned from single-character string literals and checked semantically. |
-| 📍 Pointers | Use address and dereference operations deliberately. Width mismatches should be treated as real bugs. |
-| 📦 Records | Packed layout, custom alignment, and bit fields affect binary compatibility. Document layout-sensitive records clearly. |
-| 🧩 Objects | `create` and `destroy` model lifecycle. Keep ownership rules obvious. |
-| 📥 Imports | Imported routines should be called with module qualification to avoid ambiguity. |
-| 🧪 Assertions | Use `asserteq(expected, actual)` consistently so failures read clearly. |
+```myr
+// helpers.myr
+module lib helpers;
 
-### 🧠 Reading Order for This Reference
+public routine clink helper_add(const a: int32; const b: int32): int32;
+begin
+  return a + b;
+end;
 
-For a first pass, read these sections in order:
+end.
+```
 
-1. 🚀 Types, variables, constants, and operators
-2. 🔧 Routines and parameter modes
-3. 🚦 Control flow
-4. 📋 Records, arrays, choices, sets, and overlays
-5. 🏛️ Objects and lifecycle
-6. 📥 Modules, imports, directives, and unit tests
+Build it: `myr helpers`
 
-After that, use this file as a lookup reference while writing code.
+Consume it:
+
+```myr
+// app.myr
+module exe app;
+@librarypath "$S:../output";
+
+routine clink helper_add(const a: int32; const b: int32): int32; external "helpers";
+
+begin
+  println("%d", helper_add(10, 20));   // prints 30
+end.
+```
+
+Use `@librarypath` to tell the compiler where to find the static library file.
+
+### 🏁 Module Structure Summary
+
+Every module follows this structure, with optional sections omitted as needed:
+
+```myr
+module <kind> <name>;        // required: module declaration
+
+// directives
+@target win64;               // optional: build directives
+@unittestmode on;             // optional: enable tests
+
+// imports
+import unit_a;                // optional: import other modules
+import unit_b;
+
+// declarations (in any order)
+const ... ;                   // constants
+type ... ;                    // type declarations
+var ... ;                     // variables
+routine ... ;                 // routines
+
+// lifecycle
+initialize ... end;           // optional: startup code
+finalize ... end;             // optional: shutdown code
+
+// main body (exe only) or terminator
+begin                         // exe: main entry point
+  ...
+end.
+
+// OR for dll/lib/unit:
+end.                          // module terminator
+
+// tests (after end.)
+test "name" begin ... end;    // optional: test blocks
+```
+
+> [!NOTE]
+> The `end.` terminator (with period) marks the end of the module. Everything after it is test blocks, which are only compiled with `@unittestmode on;`.
+
+<a id="c-interop"></a>
+
+## 🔗 C Interop
+
+Myrissa provides zero-cost interoperability with C libraries. You can call any C function, link against shared or static libraries, export your own routines for C callers, and generate Myrissa bindings from C headers automatically. The compiler emits native code that follows the platform C ABI directly, so the interop boundary is a compile-time mapping -- there is no runtime marshalling or FFI overhead.
+
+> [!TIP]
+> 💡 The golden rule of Myrissa interop: don't use C standard library names directly as your Myrissa routine names. The runtime already imports several of them (`printf`, `malloc`, ...) and the names will collide. Always use the `name` clause to alias to the actual C symbol.
+
+### 🔌 The External Clause
+
+The `external` clause declares a routine whose implementation lives in an external C library. Myrissa does not generate a body for it -- instead, it links against the named library at compile time.
+
+```myr
+routine clink myabs(const n: int32): int32; external "c" name "abs";
+```
+
+This declares a Myrissa routine `myabs` that calls the C standard library function `abs`. Let's break down each part:
+
+| Part | Purpose |
+|------|---------|
+| `routine` | Declares a callable routine |
+| `clink` | Use C calling convention (no name mangling) |
+| `myabs` | The Myrissa name you call in your code |
+| `(const n: int32): int32` | Parameters and return type |
+| `external "c"` | Link against the C standard library |
+| `name "abs"` | The actual C symbol name to call |
+
+> [!NOTE]
+> The `name` clause is a contextual keyword -- it has special meaning only inside the external clause and can be used as an ordinary identifier elsewhere.
+
+#### Library Name
+
+The string after `external` identifies which library to link:
+
+| Library String | Meaning |
+|----------------|---------|
+| `"c"` | C standard library -- resolves to msvcrt on `win64` and libc on `linux64` |
+| `"kernel32"` | Windows system DLL |
+| `"mylib"` | Your own library (probes for `.lib`/`.a` first, then `.dll`/`.so`) |
+| *(omitted)* | Default to libc |
+
+You can also use a constant for the library name:
+
+```myr
+const EXT_LIB = "c";
+routine clink mytoupper(const c: int32): int32; external EXT_LIB name "toupper";
+```
+
+Or omit the library name entirely to default to libc:
+
+```myr
+routine clink myabs2(const n: int32): int32; external name "abs";
+```
+
+#### The name Clause
+
+The `name` clause maps your Myrissa routine name to the actual symbol in the external library. This is essential because Myrissa routine names must not collide with C standard library names that are already included by the runtime headers.
+
+```myr
+// WRONG -- "abs" collides with <cstdlib> abs
+routine clink abs(const n: int32): int32; external "c";
+
+// RIGHT -- "myabs" is unique, "name" maps to the real symbol
+routine clink myabs(const n: int32): int32; external "c" name "abs";
+```
+
+#### External Variables
+
+You can also declare external variables -- typically used to access globals exported by a DLL:
+
+```myr
+var dll_init_count: int32; external "bnf_dll_compliance";
+```
+
+### 🏷️ Linkage: clink vs cpplink
+
+Myrissa supports two linkage modes that control how routine names are encoded in the compiled output:
+
+| Linkage | Convention | Name Mangling | Use Case |
+|---------|------------|---------------|----------|
+| `clink` | C calling convention | None -- symbol name is used as-is | Calling C libraries, exporting from DLLs |
+| `cpplink` | C++ calling convention | Itanium ABI mangling | Calling overloaded C++ functions |
+
+Most external declarations use `clink` because C libraries use unmangled names. Use `cpplink` only when you need to link against C++ symbols that use overloading (and therefore have mangled names).
+
+```myr
+// C linkage (most common)
+routine clink myabs(const n: int32): int32; external "c" name "abs";
+
+// C++ linkage (for overloaded C++ functions)
+routine cpplink cpp_func(const x: float64): float64; external "mylib";
+```
+
+When you define a routine in a `dll` or `lib` module, use `clink` to ensure the exported symbol has a clean, unmangled name that other languages can call:
+
+```myr
+module dll mylib;
+
+public routine clink my_func(const x: int32): int32;
+begin
+  return x * 2;
+end;
+
+end.
+```
+
+### 🖥️ Platform-Specific Externals
+
+Different platforms provide different system libraries. Use conditional compilation to declare platform-specific external routines:
+
+```myr
+@ifdef TARGET_WIN64
+routine clink GetTick(): uint64; external "kernel32" name "GetTickCount64";
+@endif
+
+@ifdef TARGET_LINUX64
+routine clink ext_getpid(): int32; external "c" name "getpid";
+@endif
+```
+
+> [!NOTE]
+> `external "c"` resolves to the platform C runtime on both targets (msvcrt on `win64`, libc on `linux64`) with no guard needed. You only need platform `@ifdef` guards for platform-specific libraries like `kernel32` on Windows.
+
+The predefined conditional symbols for platform detection are:
+
+| Symbol | Platform |
+|--------|----------|
+| `TARGET_WIN64`, `WINDOWS`, `WIN64` | Windows x86_64 |
+| `TARGET_LINUX64`, `LINUX` | Linux x86_64 |
+
+### 📦 DLL and Static Library Patterns
+
+#### Creating a DLL
+
+A `dll` module exports routines that other programs can call at runtime:
+
+```myr
+module dll mylib;
+
+public routine clink my_func(const x: int32): int32;
+begin
+  return x * 2;
+end;
+
+public routine clink my_add(const a: int32; const b: int32): int32;
+begin
+  return a + b;
+end;
+
+initialize
+  println("mylib loaded");
+end;
+
+finalize
+  println("mylib unloaded");
+end;
+
+end.
+```
+
+Exported routines must be marked `public` and use `clink` for a clean C ABI. The `initialize` and `finalize` blocks run when the DLL is loaded and unloaded.
+
+#### Consuming a DLL
+
+From an `exe` module, declare the external routines and name the DLL:
+
+```myr
+module exe consumer;
+
+routine clink my_func(const x: int32): int32; external "mylib";
+routine clink my_add(const a: int32; const b: int32): int32; external "mylib";
+
+begin
+  println("my_func(21) = %d", my_func(21));
+  println("my_add(10, 20) = %d", my_add(10, 20));
+end.
+```
+
+The compiler probes for `mylib.lib`/`mylib.a` (static import library) first, then `mylib.dll`/`mylib.so` (dynamic library).
+
+#### Creating a Static Library
+
+A `lib` module produces a static library (`.lib` on Windows, `.a` on Linux) that is linked directly into the consumer's binary:
+
+```myr
+module lib mathutils;
+
+public routine clink fast_add(const a: int32; const b: int32): int32;
+begin
+  return a + b;
+end;
+
+end.
+```
+
+#### Consuming a Static Library
+
+Same pattern as DLLs, but you may need `@librarypath` to tell the compiler where to find the `.lib`/`.a` file:
+
+```myr
+module exe consumer;
+
+@librarypath "$S:libs";
+
+routine clink fast_add(const a: int32; const b: int32): int32; external "mathutils";
+
+begin
+  println("%d", fast_add(10, 20));
+end.
+```
+
+> [!TIP]
+> 💡 The `$S:` prefix resolves relative to the declaring module's directory. Use `$P:` for paths relative to the compiler executable, or `$D:` for the current working directory.
+
+### 📋 Library Resolution
+
+When the compiler encounters an `external` clause, it resolves the library name using the following rules:
+
+| Extension | Type | Behavior |
+|-----------|------|----------|
+| `.lib` / `.a` | Static library | Linked directly into the binary by Myrissa's own linker |
+| `.dll` / `.so` / `.so.<version>` | Shared library | Imported; loaded by the OS at runtime |
+| *(none)* | Auto-probe | Tries static first, then shared (on `linux64`: `lib<name>.so.<ver>`, `lib<name>.so`, `<name>.so`) |
+
+The compiler searches for libraries in:
+1. The directory of the module that declares the `external`
+2. Paths added with `@addlibrarypath`
+3. For foreign archives, the `/DEFAULTLIB` entries they carry (for example Windows SDK import libraries), resolved through the same `@addlibrarypath` list
+
+Add search paths with `@addlibrarypath`. Paths resolve relative to the declaring module unless prefixed with `$P:` (compiler directory) or `$D:` (current directory):
+
+```myr
+@addlibrarypath "$P:res/libs/vendor/raylib";
+```
+
+There is no separate "link this library" directive: naming a library in any `external` clause is what links it.
+
+### 🛠️ CImporter: Generating Bindings from C Headers
+
+Myrissa includes CImporter, a tool that automatically generates `.myr` binding files from C header files. This is how large C libraries like SDL3 and raylib are integrated.
+
+#### Usage
+
+```
+myr cimport <script.mys>
+```
+
+CImporter reads a `.mys` (CImporter Script) file that describes which headers to process and how to map them. The output is a `.myr` unit module containing all the type declarations, constants, and external routine declarations needed to call the C library from Myrissa.
+
+#### Script Commands
+
+A `.mys` script is a sequence of commands that configure and run the import. Here is the full command reference:
+
+**Configuration:**
+
+| Command | Description |
+|---------|-------------|
+| `SetHeader("filename")` | C header file to import |
+| `SetModuleName("name")` | Output module name |
+| `SetDllName("name")` | DLL/shared library name |
+| `SetTargetDllName(target, "name")` | DLL name for a specific target |
+| `SetDllPath("path")` | Path to DLL for preprocessing |
+| `SetOutputPath("path")` | Output directory for generated `.myr` file |
+| `SetBindingMode(mode)` | Binding mode (`dynamic`) |
+| `SetSavePreprocessed(bool)` | Save preprocessor output (`True`/`False`) |
+
+**Paths and filtering:**
+
+| Command | Description |
+|---------|-------------|
+| `AddIncludePath("path" [, "module"])` | C include search path |
+| `AddSourcePath("path")` | C source search path |
+| `AddExcludedType("name")` | Skip a C type during import |
+| `AddExcludedFunction("name")` | Skip a C function during import |
+| `AddFunctionRename("original", "newname")` | Rename an imported function |
+| `AddUsesUnit("unit")` | Add a module dependency (import) |
+| `AddDefine("name" [, "value"])` | Preprocessor `#define` |
+| `AddUndefine("name")` | Preprocessor `#undef` |
+
+**Text manipulation** (post-process the generated output):
+
+| Command | Description |
+|---------|-------------|
+| `InsertTextAfter("target", "text" [, occurrence])` | Insert text after a match |
+| `InsertTextBefore("target", "text" [, occurrence])` | Insert text before a match |
+| `InsertFileAfter("target", "file" [, occurrence])` | Insert file contents after a match |
+| `InsertFileBefore("target", "file" [, occurrence])` | Insert file contents before a match |
+| `ReplaceText("old", "new" [, occurrence])` | Replace text in the generated output |
+
+**Linking:**
+
+| Command | Description |
+|---------|-------------|
+| `AddCopyDll(target, "path")` | Copy DLL/SO to output during build |
+| `AddLinkLibrary(target, "path")` | Add library search path for target |
+| `AddDllNameMap("path", "dllname", "dllpath")` | DLL name mapping |
+| `AddDepDll("dllname", "dllpath")` | Dependency DLL |
+
+**Execution:**
+
+| Command | Description |
+|---------|-------------|
+| `Process()` | Run the import with current settings |
+| `Clear()` | Reset all settings |
+
+**Enum values used in commands:**
+
+| Category | Values |
+|----------|--------|
+| `target` | `win64`, `linux64` |
+| `mode` | `dynamic` |
+| `bool` | `True`, `False` |
+
+#### Example: Importing raylib
+
+```
+SetSavePreprocessed(False);
+SetBindingMode(dynamic);
+SetModuleName("raylib");
+SetDllName("raylib");
+SetOutputPath("res\libs\vendor\raylib");
+SetDllPath("res\libs\vendor\raylib\win64\raylib.dll");
+AddIncludePath("res\libs\vendor\raylib\include");
+AddSourcePath("res\libs\vendor\raylib\include");
+AddExcludedType("va_list");
+SetHeader("res\libs\vendor\raylib\include\raylib.h");
+AddCopyDll(win64, "$P:res/libs/vendor/raylib/win64/raylib.dll");
+AddCopyDll(linux64, "$P:res/libs/vendor/raylib/linux64/libraylib.so.550");
+AddLinkLibrary(linux64, "$P:res/libs/vendor/raylib/linux64/");
+Process();
+```
+
+This script tells CImporter to parse `raylib.h`, generate a `raylib.myr` module, exclude the unsupported `va_list` type, and set up DLL copying for both Windows and Linux targets.
+
+#### Example: Importing SDL3 with a Dependency
+
+When a library depends on another (e.g., SDL3_mixer depends on SDL3), use `AddUsesUnit` to declare the dependency:
+
+```
+SetSavePreprocessed(False);
+SetBindingMode(dynamic);
+SetModuleName("SDL3_mixer");
+SetDllName("SDL3_mixer");
+SetOutputPath("res\libs\vendor\sdl3_mixer");
+SetDllPath("res\libs\vendor\sdl3_mixer\win64\SDL3_mixer.dll");
+AddIncludePath("res\libs\vendor\sdl3\include");
+AddSourcePath("res\libs\vendor\sdl3_mixer\include\SDL3");
+AddUsesUnit("SDL3");
+AddExcludedType("va_list");
+SetHeader("res\libs\vendor\sdl3_mixer\include\SDL3\SDL_mixer.h");
+AddCopyDll(win64, "$P:res/libs/vendor/sdl3_mixer/win64/SDL3_mixer.dll");
+Process();
+```
+
+The `AddUsesUnit("SDL3")` ensures the generated module imports `SDL3` and uses module-qualified references for SDL3 types.
+
+> [!TIP]
+> 💡 Notice that `AddIncludePath` and `AddSourcePath` point to different folders. `AddSourcePath` tells CImporter which headers to actually import -- only the mixer headers in this case. `AddIncludePath` makes the SDL3 headers visible for type resolution, but since they live in a separate folder, CImporter knows not to pull those types into the generated binding. This separation is what prevents the dependency's types from being duplicated -- they stay in the `SDL3` module where they belong.
+
+#### Using the Generated Bindings
+
+Once CImporter has generated the bindings, using them from Myrissa is straightforward:
+
+```myr
+module exe sdl_demo;
+
+import sdl3;
+
+begin
+  sdl3.SDL_Init(sdl3.SDL_INIT_VIDEO);
+  // ... SDL3 code ...
+  sdl3.SDL_Quit();
+end.
+```
+
+All imported symbols are accessed through the module qualifier, keeping the namespace clean.
+
+### 🔄 Calling Conventions and ABI
+
+Myrissa's C interop is built on these ABI guarantees:
+
+- **All 16 primitive types map directly to C types** with no conversion overhead (see [Language Reference](#language-reference) for the full mapping table)
+- **Records map to C structs** with identical memory layout (use `record packed` for packed structs)
+- **Pointers are raw machine pointers** -- `pointer to int32` is `int32_t*`
+- **Strings (`string`/`wstring`) are managed, refcounted heap objects** -- pass `cstr(s)` to get a borrowed `const char*` for C APIs, or `wstr(s)` for `const wchar_t*`
+- **Calls follow the platform C ABI** -- Win64 calling convention on `win64`, System V on `linux64`, chosen per target by the code generator
+- **The `clink` linkage produces symbols with no name mangling**, compatible with any C-linkage consumer
+
+> [!TIP]
+> 💡 When passing Myrissa strings to C functions that expect `char*`, use the `cstr()` intrinsic: `my_c_func(cstr(my_string))`. The returned pointer borrows into the managed string's storage -- no allocation or copy.
+
+### 📖 Complete Interop Example
+
+Here is a complete example that demonstrates calling libc functions from Myrissa with platform-specific externals:
+
+```myr
+module exe interop_demo;
+
+// C standard library (works on both Windows and Linux)
+routine clink myabs(const n: int32): int32; external "c" name "abs";
+routine clink mytoupper(const c: int32): int32; external "c" name "toupper";
+
+// Platform-specific externals
+@ifdef TARGET_WIN64
+routine clink GetTick(): uint64; external "kernel32" name "GetTickCount64";
+@endif
+
+begin
+  println("abs(-42) = %d", myabs(-42));
+  println("toupper('a') = %d", int32(mytoupper(int32("a"))));
+
+  @ifdef TARGET_WIN64
+  println("tick count = %llu", GetTick());
+  @endif
+end.
+```
+
+This program:
+1. Declares two libc wrappers (`myabs`, `mytoupper`) that work on all platforms
+2. Declares a Windows-only system call (`GetTick`) guarded by conditional compilation
+3. Calls all of them from the main body, with the Windows call also conditionally compiled
+
+<a id="memory-data-structures"></a>
+
+## 🧠 Memory & Data Structures
+
+Myrissa gives you direct control over memory layout and data organization. From stack-allocated records and fixed-size arrays to heap-allocated pointers and dynamic arrays, you choose exactly how your data lives in memory. The code generator lays these constructs out exactly as C would, so they interoperate with C libraries with zero abstraction overhead.
+
+### 📦 Records
+
+Records are Myrissa's primary composite data type -- equivalent to C structs. They group related fields into a single named type with a predictable memory layout.
+
+```myr
+type
+  Point = record
+    x: int32;
+    y: int32;
+  end;
+```
+
+Access fields with dot notation:
+
+```myr
+var p: Point;
+p.x := 42;
+p.y := 99;
+println("(%d, %d)", p.x, p.y);
+```
+
+#### Record Literals
+
+You can initialize a record in a single expression using named field syntax:
+
+```myr
+var p: Point = Point(x: 42, y: 99);
+var person: Person = Person(name: "Alice", age: 30);
+```
+
+Nested record literals work too:
+
+```myr
+var line: Line = Line(start: Point(x: 1, y: 2), finish: Point(x: 10, y: 20));
+```
+
+#### Packed Records
+
+By default, the compiler may insert padding between fields for alignment. Use `packed` to eliminate all padding and lay fields out contiguously:
+
+```myr
+type
+  PackedPair = record packed
+    a: int8;
+    b: int32;
+  end;
+```
+
+> [!NOTE]
+> Packed records use less memory but may have slower field access on some architectures due to misaligned reads. Use them when you need exact binary layout -- for file formats, network protocols, or hardware registers.
+
+#### Aligned Records
+
+Force a specific alignment for the entire record:
+
+```myr
+type
+  Aligned32 = record align(32)
+    val: int32;
+  end;
+```
+
+The alignment value must be a power of two. This is useful for SIMD data, cache-line optimization, or interfacing with hardware that requires specific alignment guarantees.
+
+#### Record Inheritance
+
+Records can derive from a base record. The derived record contains all fields of the base, followed by its own:
+
+```myr
+type
+  Base = record
+    id: int32;
+  end;
+
+  Derived = record(Base)
+    extra: int32;
+  end;
+```
+
+A `Derived` value has both `id` and `extra` fields. The base fields come first in memory layout, so a pointer to `Derived` is layout-compatible with a pointer to `Base`.
+
+#### Bit Fields
+
+Records can declare fields with explicit bit widths for compact binary packing:
+
+```myr
+type
+  BitPack = record
+    a: uint32 : 4;   // 4-bit field (values 0..15)
+    b: uint32 : 4;   // another 4-bit field
+    c: uint32 : 8;   // 8-bit field (values 0..255)
+  end;
+```
+
+Bit fields are useful for hardware register mappings, compact flags, and binary protocol fields where every bit matters.
+
+### 🔀 Overlays (Unions)
+
+An overlay lets multiple fields share the same memory -- only one is valid at a time. This is equivalent to a C `union`:
+
+```myr
+type
+  Value = overlay
+    asInt: int64;
+    asFloat: float64;
+  end;
+```
+
+Both `asInt` and `asFloat` occupy the same 8 bytes. Writing to one and reading the other reinterprets the raw bits.
+
+#### Anonymous Overlays in Records
+
+You can embed an anonymous overlay directly inside a record to create tagged union patterns:
+
+```myr
+type
+  Tagged = record
+    tag: int32;
+    overlay
+      iVal: int64;
+      fVal: float64;
+    end;
+  end;
+```
+
+The `tag` field sits at its own offset, while `iVal` and `fVal` share the same memory after it. Your code uses `tag` to know which overlay field is currently valid.
+
+### 🏷️ Choices (Enumerations)
+
+Choices define a set of named integer constants -- equivalent to C enums:
+
+```myr
+type
+  Color = choices(red, green, blue = 5, alpha);
+```
+
+Values are sequential starting from 0 unless explicitly assigned. After `blue = 5`, `alpha` becomes 6.
+
+Access choice values with dot notation:
+
+```myr
+var c: Color = Color.red;
+
+match c of
+  Color.red:   println("red");
+  Color.green: println("green");
+  Color.blue:  println("blue");
+  Color.alpha: println("alpha");
+end;
+```
+
+> [!TIP]
+> 💡 Choices are always qualified with their type name (`Color.red`, not just `red`). This prevents name collisions when multiple choice types define similar values.
+
+### 📐 Arrays
+
+#### Fixed-Size Arrays
+
+Fixed-size arrays have bounds known at compile time:
+
+```myr
+var arr: array[0..4] of int32;
+arr[0] := 10;
+arr[1] := 20;
+println("first = %d", arr[0]);
+```
+
+The bounds are inclusive -- `array[0..4]` has 5 elements (indices 0 through 4).
+
+#### Dynamic Arrays
+
+Dynamic arrays are heap-allocated and can be resized at runtime:
+
+```myr
+var darr: array of int32;
+setlength(darr, 5);        // allocate 5 elements
+darr[0] := 100;
+darr[1] := 200;
+println("len = %d", len(darr));   // prints 5
+```
+
+Use `setlength` to allocate or resize, and `len` to query the current length. Elements are zero-indexed.
+
+> [!NOTE]
+> Dynamic arrays are managed -- they are automatically freed when they go out of scope. You do not need to manually free them.
+
+### 🎯 Pointers
+
+Pointers hold the memory address of another value. Myrissa supports both typed and untyped pointers.
+
+#### Typed Pointers
+
+A typed pointer knows what type it points to:
+
+```myr
+var x: int32 = 42;
+var p: pointer to int32 = address of x;
+println("%d", p^);     // dereference: prints 42
+```
+
+| Operator | Meaning |
+|----------|---------|
+| `address of expr` | Get the address of a variable or field |
+| `expr^` | Dereference a pointer (access the value it points to) |
+
+You can declare pointer types for reuse:
+
+```myr
+type
+  IntPtr = pointer to int32;
+  ConstPtr = pointer to const int32;
+```
+
+A `pointer to const` prevents modification through the pointer -- the pointed-to value is read-only.
+
+#### Untyped Pointers
+
+The bare `pointer` type is an untyped pointer, equivalent to C's `void*`:
+
+```myr
+var p: pointer;
+```
+
+Untyped pointers cannot be dereferenced directly -- you must cast them to a typed pointer first. They are useful for raw memory operations and interop with C APIs that use `void*`.
+
+#### nil
+
+The `nil` literal represents a null pointer:
+
+```myr
+var p: pointer to int32 = nil;
+if p = nil then
+  println("null pointer");
+end;
+```
+
+### 🗄️ Heap Allocation
+
+Myrissa provides two levels of heap memory management: typed allocation with `new`/`dispose`, and raw allocation with `getmem`/`freemem`/`resizemem`.
+
+#### new / dispose (Typed Allocation)
+
+`new` allocates memory for a typed pointer and default-constructs the value. `dispose` frees it and sets the pointer to `nil`:
+
+```myr
+var p: pointer to Point;
+new(p);              // allocate + default-construct
+p^.x := 42;
+p^.y := 99;
+println("(%d, %d)", p^.x, p^.y);
+dispose(p);          // free + set to nil
+```
+
+> [!TIP]
+> 💡 Always pair `new` with `dispose`. After `dispose`, the pointer is automatically set to `nil`, so accidental double-frees are harmless.
+
+#### getmem / freemem / resizemem (Raw Allocation)
+
+For raw, unstructured memory -- buffers, byte arrays, interop with C APIs:
+
+```myr
+var buf: pointer to uint8;
+getmem(buf);                  // allocate
+resizemem(buf, 1024);         // resize to 1024 bytes
+// ... use buf ...
+freemem(buf);                 // free
+```
+
+| Intrinsic | Purpose |
+|-----------|---------|
+| `getmem(ptr)` | Allocate raw memory |
+| `freemem(ptr)` | Free raw memory |
+| `resizemem(ptr, size)` | Resize an existing allocation |
+
+> [!NOTE]
+> Raw memory intrinsics do not construct or destruct values. The memory is uninitialized after `getmem`. Use `new`/`dispose` when you need proper initialization.
+
+### 🎲 Sets
+
+Sets represent collections of integer values, implemented as efficient bitmasks. They support up to 64 elements with an arbitrary base offset.
+
+#### Creating Sets
+
+```myr
+var s: set;
+s := [1, 3, 5, 7];          // individual elements
+s := [1..10];                // range
+s := [1, 3..7, 10];         // mixed elements and ranges
+```
+
+#### Set Type Declarations
+
+```myr
+type SmallSet = set of 0..31;
+```
+
+#### Membership Test
+
+```myr
+if 5 in s then
+  println("5 is in the set");
+end;
+```
+
+#### Set Operations
+
+| Operator | Operation | Example |
+|----------|-----------|---------|
+| `+` | Union | `var u: set = a + b;` |
+| `*` | Intersection | `var i: set = a * b;` |
+| `-` | Difference | `var d: set = a - b;` |
+| `=` | Equality | `if a = b then ...` |
+| `<>` | Inequality | `if a <> b then ...` |
+| `in` | Membership | `if x in s then ...` |
+
+```myr
+var odds: set = [1, 3, 5, 7, 9];
+var primes: set = [2, 3, 5, 7];
+
+var both: set = odds * primes;       // intersection: [3, 5, 7]
+var either: set = odds + primes;     // union: [1, 2, 3, 5, 7, 9]
+var oddOnly: set = odds - primes;    // difference: [1, 9]
+```
+
+> [!TIP]
+> 💡 Sets are stack-allocated bitmasks, not heap collections. Operations like union, intersection, and membership test are single CPU instructions. Use them freely for flags, permissions, feature toggles, and any situation where you need fast membership testing over a bounded range of integers.
+
+### 📋 Forward Declarations
+
+When two types need to reference each other, or when you want to declare a routine before defining it, use forward declarations:
+
+#### Forward Types
+
+```myr
+forward type MyRecord;
+
+type
+  MyPtr = pointer to MyRecord;   // OK -- pointer to forward-declared type
+
+// ... later in the same module:
+type
+  MyRecord = record
+    val: int32;
+    next: MyPtr;
+  end;
+```
+
+> [!NOTE]
+> Forward-declared types can only be used in `pointer to` contexts until the full declaration appears. You cannot declare variables of a forward type or access its fields until it is fully defined.
+
+#### Forward Routines
+
+```myr
+forward routine compute(a: int32): int32;
+
+// ... can call compute() here ...
+
+routine compute(a: int32): int32;
+begin
+  return a * 2;
+end;
+```
+
+The forward declaration and the full definition must have matching signatures. Unresolved forwards at module end are compile errors.
+
+### 🔄 Type Casts
+
+Explicit type casts convert values between compatible types:
+
+```myr
+var x: int64 = 12345;
+var y: int32 = int32(x);       // narrow: int64 -> int32
+
+var f: float64 = 3.14;
+var i: int32 = int32(f);       // truncate: float64 -> int32
+```
+
+The cast syntax uses the target type as a function call: `TargetType(expr)`. The compiler validates that the conversion is meaningful -- you cannot cast between completely unrelated types.
+
+### 📊 Summary
+
+| Feature | Stack | Heap | Managed |
+|---------|-------|------|---------|
+| Records | ✅ | Via `new`/`dispose` | No |
+| Fixed arrays | ✅ | No | No |
+| Dynamic arrays | No | ✅ | Yes (auto-freed) |
+| Typed pointers | ✅ (the pointer itself) | Points to heap with `new` | No |
+| Sets | ✅ | No | No |
+| Choices | ✅ | No | No |
 
 <a id="bnf-grammar"></a>
 
@@ -1580,13 +2448,13 @@ After that, use this file as a lookup reference while writing code.
 
 ### 🧾 Syntax Notation
 
-This section is the formal grammar reference for Myrissa. It is intended for implementers, tooling authors, and anyone who needs exact syntax rules. For an easier language walkthrough, see [Language Reference](#language-reference).
+This section is the formal grammar reference for the Myrissa Programming Language. It is intended for implementers, tooling authors, and anyone who needs exact syntax rules. For an easier language walkthrough, see [Language Reference](#language-reference).
 
 The grammar uses EBNF notation. Brackets `[` and `]` mark optional elements. Braces `{` and `}` mark repetition, zero or more times. Parentheses group alternatives. The vertical bar `|` separates alternatives. Terminal symbols are enclosed in quotes or written as lowercase literal tokens. Non-terminals are written in PascalCase.
 
 
 > [!NOTE]
-> 🧾 This file is intentionally formal. Use it when you need the exact grammar contract. Use the [Language Reference](#language-reference) for explanations and the [How-To Guide](#how-to-guide) for examples.
+> 🧾 This file is intentionally formal. Use it when you need the exact grammar contract. Use the [Language Reference](#language-reference) for explanations and the [Common Tasks](#common-tasks) for examples.
 
 ### 🔎 How to Read This Grammar
 
@@ -1675,17 +2543,17 @@ The language is **case-sensitive** for keywords and identifiers.
 ```
 address    align      and        array      assert     asserteq
 asserteqf  assertfalse assertfail assertnil assertnotnil asserttrue
-begin      break      choices    clink      const      continue   cpplink
-create     cstr       destroy
+begin      break      choices    clink      const      continue
+cpplink    cstr       dispose
 div        do         downto     else       end        except
 exccode    excmsg     external   false      finalize   finally
-for        freemem    getmem     guard
+for        forward    freemem    getmem     guard
 if         import     in         initialize is         len
-match      method     mod        module
-nil        not        object     of         or         overlay
-packed     paramcount paramstr   parent     pointer    print
+match      mod        module     new
+nil        not        of         or         overlay
+packed     paramcount paramstr   pointer    print
 println    public     record     repeat     resizemem
-return     routine    self       set        setlength  shl
+return     routine    set        setlength  shl
 shr        size       test       then       throw
 throwcode  to         true       type       until      utf8
 var        varargs    while      wstr       xor
@@ -1769,8 +2637,10 @@ Module        = "module" ModuleKind ident ";" [ Directives ] [ ImportClause ]
                 { Declaration }
                 [ "initialize" StatementSeq "end" ";" ]
                 [ "finalize" StatementSeq "end" ";" ]
-                "begin" StatementSeq "end" "."
+                ( MainBody | "end" "." )
                 { TestBlock } .
+
+MainBody      = "begin" StatementSeq "end" "." .   (* exe modules only *)
 
 ModuleKind    = "exe" | "dll" | "lib" | "unit" .
 
@@ -1828,7 +2698,7 @@ ElseDir     = "@else" .
 EndifDir    = "@endif" .
 ```
 
-#### 📜 Known Directives
+#### 📜 Directives
 
 All directives below are terminated by `;`. Bare identifiers are the canonical
 form for enumerated values; quoted strings are reserved for paths and free text.
@@ -1839,13 +2709,13 @@ form for enumerated values; quoted strings are reserved for paths and free text.
 - `@resfile "path";` -- Specifies a compiled resource file (.res) to link into the output.
 - `@outputpath "path";` -- Sets the output directory for the compiled binary.
 - `@copydll "path";` -- Copies a DLL/shared library to the output directory during build.
-- `@linklibrary "path";` -- Links an additional static or shared library into the output.
-- `@libpath "path";` -- Adds a directory to the library and module search path.
+- `@addlinklibrary "path";` -- Links an additional static or shared library into the output.
+- `@librarypath "path";` -- Adds a directory to the library and module search path.
 - `@modulepath "path";` -- Adds a directory to the module (unit) search path.
 - `@includepath "path";` -- Adds a directory to the include search path.
 - `@subsystem console|gui;` -- Sets the application subsystem (bare identifier). Default: `console`. Windows-only: on the linux64 target it produces a warning and is ignored.
 - `@target win64|linux64;` -- Sets the compilation target (bare identifier). Default: `win64`. Overrides the API SetTarget for the current compile only; must appear in the root module.
-- `@optimize debug|none|basic|full;` -- Sets optimization level (bare identifier).
+- `@optimize none|basic|full;` -- Sets optimization level (bare identifier).
 - `@unittestmode on|off;` -- Enables or disables test block compilation and test runner entry point (bare identifier).
 
 ##### Path resolution
@@ -1872,7 +2742,7 @@ elsewhere; the `$P:` form always finds the file shipped beside the compiler:
 
 ```
 @copydll "$P:res/libs/vendor/raylib/win64/raylib.dll";
-@libpath "$P:res/libs/vendor/raylib";
+@addlibrarypath "$P:res/libs/vendor/raylib";
 @exeicon "$P:res/assets/icons/myrissa.ico";
 ```
 
@@ -1923,7 +2793,8 @@ elsewhere; the `$P:` form always finds the file shipped beside the compiler:
 ### 📦 8. Declarations
 
 ```
-Declaration     = [ "public" ] ( ConstSection | TypeSection | VarSection | RoutineDecl ) .
+Declaration     = [ "public" ] ( ConstSection | TypeSection | VarSection | RoutineDecl )
+                | ForwardDecl .
 
 ConstSection    = "const" { [ "public" ] ConstDecl } .
 ConstDecl       = ident [ ":" TypeExpr ] "=" Expression ";" .
@@ -1933,8 +2804,23 @@ TypeDecl        = ident "=" TypeDef ";" .
 
 VarSection      = "var" { [ "public" ] VarDecl } .
 VarDecl         = ident ":" TypeExpr [ "=" Expression ] ";" [ ExternalVarClause ] .
-ExternalVarClause = "external" [ cstring | ident ] ";" .
+ExternalVarClause = "external" [ cstring | ident ] [ "name" cstring ] ";" .
+
+ForwardDecl     = "forward" ( ForwardType | ForwardRoutine ) .
+ForwardType     = "type" ident ";" .
+ForwardRoutine  = "routine" [ LinkageSpec ] ident [ FormalParams ] [ ":" TypeExpr ] ";" .
 ```
+
+> [!IMPORTANT]
+> **Forward declaration semantics.** A `forward` declaration introduces a name
+> before its full definition appears. The full declaration must appear later in
+> the same module. For types, a forward-declared name may only be used in
+> `pointer to` contexts until the full definition is seen, because the type's
+> size and layout are unknown. For routines, the forward carries the full
+> signature, so calls are valid immediately. If a forward declaration has no
+> matching full declaration by module end, it is a compile error. The full
+> declaration must match the forward exactly (same signature for routines,
+> same kind for types).
 
 
 ### 🔧 9. Routine Declarations
@@ -1949,7 +2835,7 @@ FormalParams    = "(" [ ParamList ] ")" .
 ParamList       = ParamDecl { ";" ParamDecl } [ ";" "..." ] | "..." .
 ParamDecl       = [ "var" | "const" ] ident ":" TypeExpr .
 
-ExternalClause  = "external" [ cstring | ident ] ";" .
+ExternalClause  = "external" [ cstring | ident ] [ "name" cstring ] ";" .
 
 RoutineBody     = [ "type" { TypeDecl } ]
                   [ "const" { ConstDecl } ]
@@ -1959,6 +2845,26 @@ RoutineBody     = [ "type" { TypeDecl } ]
 
 - **C linkage (`clink`)**: Explicit C calling convention and naming. This is also the default when no linkage spec is given.
 - **C++ linkage (`cpplink`)**: Enables Itanium ABI name mangling for C++ interoperability and overloading.
+
+#### 🔄 Routine Overloading
+
+Multiple routines with the same name but different parameter signatures are
+permitted under `cpplink` linkage. Overload resolution at the call site matches
+by argument count and parameter types.
+
+Overloading requires `cpplink`. If overloaded routines are declared without
+`cpplink` (i.e., with `clink` or no linkage spec), the compiler auto-promotes
+them to `cpplink` and emits a warning. This ensures correct C++ name mangling.
+
+```
+// Explicit cpplink
+routine cpplink add(a: int32; b: int32): int32;
+routine cpplink add(a: float64; b: float64): float64;
+
+// Implicit promotion (compiler warns, defaults to cpplink)
+routine add(a: int32; b: int32): int32;
+routine add(a: int32; b: int32; c: int32): int32;
+```
 
 #### 🔗 External Clause Semantics
 
@@ -1990,23 +2896,18 @@ routine InitWindow(const width: int32; const height: int32;
 ### 🏷️ 10. Type Definitions
 
 ```
-TypeDef         = RecordType | ObjectType | OverlayType | ArrayType
+TypeDef         = RecordType | OverlayType | ArrayType
                 | PointerType | SetType | ChoicesType | RoutineType | TypeExpr .
 
 RecordType      = "record" [ "packed" ] [ "align" "(" integer ")" ]
                   [ "(" TypeExpr ")" ]
                   { FieldDecl | AnonOverlay } "end" .
 
-ObjectType      = "object" [ "(" TypeExpr ")" ] { FieldDecl | MethodDecl } "end" .
-
 OverlayType     = "overlay" { FieldDecl | AnonRecord } "end" .
 AnonRecord      = "record" [ "packed" ] { FieldDecl | AnonOverlay } "end" ";" .
 AnonOverlay     = "overlay" { FieldDecl | AnonRecord } "end" ";" .
 
 FieldDecl       = ident ":" TypeExpr [ ":" integer ] ";" .
-
-MethodDecl      = "method" ident [ FormalParams ] [ ":" TypeExpr ] ";"
-                  [ "var" { VarDecl } ] "begin" StatementSeq "end" ";" .
 
 ArrayType       = "array" [ "[" [ ArrayBounds ] "]" ] "of" TypeExpr .
 ArrayBounds     = integer ".." integer .
@@ -2029,7 +2930,7 @@ QualIdent       = ident { "." ident } .
 ```
 
 > [!NOTE]
-> `object` is used instead of `class`, `choices` instead of `enum`,
+> `choices` is used instead of `enum`,
 > and `overlay` instead of `union`. Anonymous overlays and records can nest
 > inside each other for C data interop. Records support single inheritance
 > via `record(BaseType)` syntax and bit fields via `fieldname: type : width`.
@@ -2043,10 +2944,12 @@ StatementSeq    = { Statement } .
 Statement       = [ Assignment | CallStmt | IfStmt | WhileStmt | ForStmt
                 | RepeatStmt | BreakStmt | ContinueStmt
                 | MatchStmt | ReturnStmt | GuardStmt | RaiseStmt
-                | CreateStmt | DestroyStmt
+                | NewStmt | DisposeStmt
                 | GetMemStmt | FreeMemStmt | ResizeMemStmt | SetLengthStmt
                 | PrintStmt
-                | AssertStmt | Directive | ";" ] .
+                | AssertStmt | InlineVarDecl | Directive | ";" ] .
+
+InlineVarDecl   = "var" ident ":" TypeExpr [ "=" Expression ] ";" .
 
 Assignment      = Designator ( ":=" | "+=" | "-=" | "*=" | "/=" ) Expression [ ";" ] .
 
@@ -2077,8 +2980,8 @@ GuardStmt       = "guard" StatementSeq
 RaiseStmt       = ( "throw" "(" Expression ")"
                   | "throwcode" "(" Expression "," Expression ")" ) [ ";" ] .
 
-CreateStmt      = "create" "(" Expression ")" [ ";" ] .
-DestroyStmt     = "destroy" "(" Expression ")" [ ";" ] .
+NewStmt         = "new" "(" Expression ")" [ ";" ] .
+DisposeStmt     = "dispose" "(" Expression ")" [ ";" ] .
 GetMemStmt      = "getmem" "(" Expression ")" [ ";" ] .
 FreeMemStmt     = "freemem" "(" Expression ")" [ ";" ] .
 ResizeMemStmt   = "resizemem" "(" Expression "," Expression ")" [ ";" ] .
@@ -2140,7 +3043,7 @@ Primary         = integer | float_literal | cstring | wstring
                 | SetLiteral | RecordLiteral
                 | "(" Expression ")" | Designator | Intrinsic | TypeCast .
 
-Designator      = ( ident | "self" | "parent" | "varargs" ) { Selector } .
+Designator      = ( ident | "varargs" ) { Selector } .
 Selector        = "." ident | "[" Expression "]" | "^" | "(" [ ArgList ] ")" .
 
 ArgList         = Expression { "," Expression } .
@@ -2187,7 +3090,7 @@ ExcMsgExpr      = "excmsg" "(" ")" .
 > while the owning string is alive. `wstr` is the UTF-16 counterpart of
 > `cstr`: it returns a BORROWED `wchar*` that the runtime widens once and
 > CACHES on the string itself, so repeat calls are free and the buffer must
-> never be freed by the caller. Memory management (`create`/`destroy`/`getmem`/
+> never be freed by the caller. Memory management (`new`/`dispose`/`getmem`/
 > `freemem`/`resizemem`/`setlength`) is defined in Statements (Section 11).
 
 
@@ -2298,3539 +3201,1062 @@ Use this checklist when updating the grammar or adding syntax:
 > [!WARNING]
 > 🧯 Keep grammar changes synchronized with examples. A grammar rule that accepts syntax not shown anywhere else is hard for users to discover, and an example that violates the grammar is worse than no example at all.
 
-<a id="langdef-system"></a>
+<a id="runtime-library"></a>
 
-## 🧬 Langdef System
+## ⚙️ Runtime Library
 
-Most compilers are sealed. The grammar lives in generated tables, the type rules live in hand-written passes, and the code generator is a wall of string building buried in the source. If you want to change the language, you fork the compiler.
+Myrissa includes a small runtime that is generated into every program by the compiler's own backend -- there is no runtime source file to ship or link. It provides the low-level machinery behind language features like exception handling, managed strings, set operations, memory management with leak tracking, CLI argument access, and unit testing. You never need to import or reference it directly -- the compiler emits calls to it as needed. Executables and DLLs each carry their own copy; a static library uses the runtime of the module that links it.
 
-Myrissa is not built that way. **The language is defined by `.mld` files that ship as plain text beside the compiler.** The tokens, the type system, the grammar, the semantic rules, and the code generation emitters are all readable, editable definition files. The engine loads them at startup, populates its dispatch tables, and then compiles your `.myr` source with whatever those files say the language is.
+### 🛡️ Exception Handling
 
-Change an `.mld` file and you have changed the language. That is the third pillar.
+Myrissa's `guard`/`except`/`finally` blocks compile down to runtime exception handling that catches both software exceptions (thrown with `throw` or `throwcode`) and hardware faults like division by zero and access violations.
 
-> [!IMPORTANT]
-> 🔓 This is not a plugin API or an extension point. There is no privileged "real" grammar hidden underneath. The `.mld` files **are** Myrissa. Everything the compiler knows about the language, it read from them.
+#### Throwing Exceptions
 
-This section is a complete reference for **MLD**, the Myrissa Language Definition format. It is written so you can build a language with it, not merely admire that it exists.
+```myr
+throw("something went wrong");           // code defaults to 1 (RT_EXC_SOFTWARE)
+throwcode(42, "custom error with code");  // user-defined error code
+```
 
-### 🗂️ Section Contents
+#### Catching Exceptions
 
-| Part | Covers |
-|------|--------|
-| [The Engine and the Pipeline](#mld-engine) | What MLD is, how the two phases work, the eight files |
-| [File Structure](#mld-file-structure) | The `language` declaration and every top-level construct |
-| [Tokens Block](#mld-tokens) | Keywords, operators, comments, strings, directives, lexer config |
-| [Types Block](#mld-types) | Type keywords, C++ mappings, literal types, the compatibility matrix |
-| [Grammar Block](#mld-grammar) | Pratt parsing: prefix, infix, statement rules, binding powers |
-| [Semantics Block](#mld-semantics) | Scopes, symbols, multi-pass analysis |
-| [Emitters Block](#mld-emitters) | Statement and expression emission, headers, directives |
-| [The Imperative Language](#mld-imperative) | Variables, control flow, operators, interpolation, diagnostics |
-| [Routines, Constants, Enums](#mld-routines) | User-defined helpers |
-| [Fragments, Imports, Guards](#mld-fragments) | Reuse and conditional inclusion |
-| [Built-in Function Reference](#mld-builtins) | Every builtin, by context |
-| [Formal Grammar (EBNF)](#mld-ebnf) | The complete MLD meta-grammar |
+```myr
+guard
+  // protected code that might fail
+  throw("test error");
+except
+  println("caught: code=%lld, msg=%s", exccode(), excmsg());
+finally
+  println("cleanup always runs");
+end;
+```
 
-<a id="mld-engine"></a>
+The `exccode()` intrinsic returns the integer error code. The `excmsg()` intrinsic returns the error message string. Both are valid only inside an `except` block.
 
-### ⚙️ The Engine and the Pipeline
+#### Exception Codes
 
-MLD is the meta-language used to define Myrissa. An `.mld` file describes a **complete compiler pipeline**: lexer tokens, Pratt parser grammar, multi-pass semantic analysis, and code generation. The engine reads the `.mld` files, populates its internal dispatch tables, and then uses those tables to compile `.myr` source into IR/native, which the bundled native toolchain builds into a native binary.
-
-Compilation happens in two phases:
-
-| Phase | What Happens |
-|-------|--------------|
-| **Setup** | The `.mld` files are parsed. Their contents populate dispatch tables: token registrations, grammar rules, semantic handlers, emitter handlers, user-defined routines. |
-| **Compile** | Those tables drive a generic lexer, a Pratt parser, a semantic analyzer, and a code generator, which process `.myr` source and produce IR/native. |
-
-Nothing about Myrissa is hard-coded into the engine. The engine is a machine that runs language definitions. Myrissa is one such definition.
-
-#### The Six Files
-
-Myrissa's definition lives in `bin/res/language/`. `myrissa.mld` is the root; it imports the rest.
-
-| File | Purpose |
-|------|---------|
-| `myrissa.mld` | Root: language declaration, imports, defines, module paths |
-| `myrissa_tokens.mld` | Token declarations and the type system |
-| `myrissa_helpers.mld` | Shared routines (linkage helpers, type resolution utilities) |
-| `myrissa_grammar.mld` | Grammar rules: prefix, infix, and statement |
-| `myrissa_semantics.mld` | Semantic analysis handlers |
-| `myrissa_emitters.mld` | Code generation handlers (IR emission via `ir*` builtins) |
+| Code | Constant | Meaning |
+|------|----------|---------|
+| 0 | `RT_EXC_NONE` | No exception |
+| 1 | `RT_EXC_SOFTWARE` | Software exception (default for `throw`) |
+| 2 | `RT_EXC_DIV_BY_ZERO` | Division by zero |
+| 3 | `RT_EXC_ACCESS_VIOLATION` | Null pointer or invalid memory access |
+| 4 | `RT_EXC_STACK_OVERFLOW` | Stack overflow |
+| 5 | `RT_EXC_INTEGER_OVERFLOW` | Integer overflow |
+| 6 | `RT_EXC_ILLEGAL_INSTRUCTION` | Illegal CPU instruction |
+| 7 | `RT_EXC_BUS_ERROR` | Bus error (alignment fault) |
+| 99 | `RT_EXC_UNKNOWN` | Unknown or unrecognized exception |
 
 > [!NOTE]
-> 🧩 There is no host-language glue. No C, no Python, no build-system integration, no escape hatch out of MLD into "the real compiler." An `.mld` file is a complete, self-contained, portable language specification.
+> Hardware exceptions (codes 2--7) are caught via Windows Vectored Exception Handling (VEH) on Windows and POSIX signals on Linux. The `guard` block handles both software and hardware exceptions uniformly.
 
-<a id="mld-file-structure"></a>
+### 📝 String Conversion
 
-### 📄 File Structure
+The runtime provides conversion between UTF-8 and UTF-16 string encodings, which is essential for Windows API interop and wide-string handling.
 
-An `.mld` file begins with a `language` declaration and contains top-level blocks. Comments use `//` (line) and `/* ... */` (block).
+#### utf8
 
-```mld
-language Myrissa version "1.0";
+Converts a wide string (`wstring`) to a UTF-8 encoded `char*` buffer. The caller owns the returned buffer:
 
-// Constants must appear before they are referenced.
-const {
-  ENABLE_OVERLOADS    = true;
-  ENABLE_FORWARD_REFS = true;
-}
-
-// Conditional-compilation symbols visible to @ifdef in .myr source.
-setDefine("MYRA");
-
-// Where `import` in .myr source looks for modules.
-addModulePath("res/libs/std");
-
-// Load the rest of the definition.
-import "myrissa_tokens.mld";
-import "myrissa_utils.mld";
-import "myrissa_helpers.mld";
-import "myrissa_grammar.mld";
-import "myrissa_semantics.mld";
-import "myrissa_emitters.mld";
-
-tokens    { /* keywords, operators, delimiters, strings, directives, config */ }
-types     { /* type keywords, C++ mappings, compatibility matrix */ }
-grammar   { /* prefix, infix, and statement rules */ }
-semantics { /* scope, declare, visit */ }
-emitters  { /* code generation */ }
-
-// Reusable helpers, callable from any handler.
-routine resolveType(typeText: string) -> string {
-  if typeText == "int32" { return "int32_t"; }
-  return typeText;
-}
+```myr
+var ws: wstring = w"Hello";
+var s: pointer to char = utf8(ws);
+// s is now a heap-allocated UTF-8 buffer -- caller must free
 ```
 
-Every top-level construct:
+#### wstr
 
-| Construct | Description |
-|-----------|-------------|
-| `language Name version "X.Y";` | Language declaration. **Required, must be first.** |
-| `tokens { ... }` | Token declarations and lexer configuration |
-| `types { ... }` | Type system configuration |
-| `grammar { ... }` | Parser grammar rules |
-| `semantics { ... }` | Semantic analysis handlers |
-| `emitters { ... }` | Code generation handlers |
-| `const { ... }` | Named constants |
-| `enum Name { ... }` | Enum declaration |
-| `routine name(...) -> t { ... }` | User-defined routine |
-| `fragment name { ... }` | Reusable declaration block |
-| `import "file.mld";` | Load an external `.mld` file |
-| `include fragmentName;` | Expand a fragment |
-| `guard EXPR { ... }` | Conditional inclusion |
+Converts a UTF-8 string to a wide character pointer. The runtime caches the result, so you do not need to free it:
 
-Each block feeds one stage of the pipeline:
-
-| Block | Drives | Answers |
-|-------|--------|---------|
-| `tokens` | The lexer | What words and symbols exist? |
-| `types` | The type system | What is `int32`, and what C++ does it become? |
-| `grammar` | The Pratt parser | How do tokens become an AST? |
-| `semantics` | The analyzer | Is this program meaningful? |
-| `emitters` | The code generator | What IR/native comes out? |
-
-<a id="mld-tokens"></a>
-
-### 🔤 Tokens Block
-
-The `tokens {}` block teaches the lexer how to break source into meaningful pieces. Every declaration follows one pattern:
-
-```mld
-token category.name = "text" [flags];
+```myr
+var s: string = "Hello";
+var ws: pointer to wchar = wstr(s);
+// ws is a cached pointer -- no free needed
 ```
 
-The category prefix determines how the token is registered with the engine.
+#### cstr
 
-| Category | Description |
-|----------|-------------|
-| `keyword.*` | Reserved word |
-| `op.*` | Operator |
-| `delimiter.*` | Punctuation |
-| `comment.line` | Line-comment prefix |
-| `comment.block_open` / `comment.block_close` | Block-comment delimiters |
-| `string.*` | String literal style |
-| `directive.*` | Named directive |
+Borrows a raw `char*` pointer into managed string storage without allocation:
 
-#### Keywords
-
-Once declared, the lexer emits the specified token kind instead of `identifier`. These words can never be used as variable or routine names.
-
-```mld
-tokens {
-  casesensitive = true;
-
-  // Module structure
-  token keyword.module    = "module";
-  token keyword.import    = "import";
-  token keyword.exported  = "exported";
-  token keyword.external  = "external";
-
-  // Linkage. cpplink is the DEFAULT; clink selects C linkage.
-  token keyword.clink     = "clink";
-  token keyword.cpplink   = "cpplink";
-
-  // Control flow
-  token keyword.begin     = "begin";
-  token keyword.end       = "end";
-  token keyword.if        = "if";
-  token keyword.then      = "then";
-  token keyword.else      = "else";
-  token keyword.while     = "while";
-  token keyword.do        = "do";
-  token keyword.for       = "for";
-  token keyword.to        = "to";
-  token keyword.downto    = "downto";
-  token keyword.repeat    = "repeat";
-  token keyword.until     = "until";
-  token keyword.match     = "match";
-  token keyword.return    = "return";
-  token keyword.leave     = "leave";
-  token keyword.skip      = "skip";
-
-  // Declarations
-  token keyword.var       = "var";
-  token keyword.const     = "const";
-  token keyword.type      = "type";
-  token keyword.routine   = "routine";
-  token keyword.method    = "method";
-
-  // Type definitions
-  token keyword.record    = "record";
-  token keyword.object    = "object";
-  token keyword.overlay   = "overlay";
-  token keyword.choices   = "choices";
-  token keyword.packed    = "packed";
-  token keyword.align     = "align";
-  token keyword.array     = "array";
-  token keyword.of        = "of";
-  token keyword.set       = "set";
-  token keyword.pointer   = "pointer";
-
-  // Word operators
-  token keyword.and       = "and";
-  token keyword.or        = "or";
-  token keyword.not       = "not";
-  token keyword.xor       = "xor";
-  token keyword.div       = "div";
-  token keyword.mod       = "mod";
-  token keyword.shl       = "shl";
-  token keyword.shr       = "shr";
-  token keyword.in        = "in";
-  token keyword.is        = "is";
-
-  // Output intrinsics
-  token keyword.print     = "print";
-  token keyword.println   = "println";
-
-  // Literals
-  token keyword.true      = "true";
-  token keyword.false     = "false";
-  token keyword.nil       = "nil";
-}
+```myr
+var s: string = "Hello";
+var raw: pointer to char = cstr(s);
+// raw points into s's internal buffer -- valid as long as s is alive
 ```
-
-Want `func` instead of `routine`? Change one string.
-
-> [!WARNING]
-> ⚠️ `keyword.is` is **declared** in `myrissa_tokens.mld` but has **no grammar production**. It lexes, and then nothing consumes it. The same is true of `op.pipe` (`|`) and `op.ampersand` (`&`). These are reserved for future use. Do not build on them.
-
-#### Operators and Delimiters
-
-The engine sorts operators by length internally so longest-match wins (`:=` matches before `:`). Declaring multi-character operators first is documentation, not a requirement.
-
-```mld
-tokens {
-  // Multi-character
-  token op.assign       = ":=";
-  token op.plus_assign  = "+=";
-  token op.minus_assign = "-=";
-  token op.mul_assign   = "*=";
-  token op.div_assign   = "/=";
-  token op.neq          = "<>";
-  token op.lte          = "<=";
-  token op.gte          = ">=";
-  token op.ellipsis     = "...";
-  token op.range        = "..";
-
-  // Single-character
-  token op.eq           = "=";
-  token op.lt           = "<";
-  token op.gt           = ">";
-  token op.plus         = "+";
-  token op.minus        = "-";
-  token op.multiply     = "*";
-  token op.divide       = "/";
-  token op.deref        = "^";
-
-  // Delimiters
-  token delimiter.lparen    = "(";
-  token delimiter.rparen    = ")";
-  token delimiter.lbracket  = "[";
-  token delimiter.rbracket  = "]";
-  token delimiter.comma     = ",";
-  token delimiter.colon     = ":";
-  token delimiter.semicolon = ";";
-  token delimiter.dot       = ".";
-}
-```
-
-#### Comments
-
-Line comments use `comment.line`. Block comments require a matched open/close pair. Multiple styles may be declared.
-
-```mld
-tokens {
-  token comment.line        = "//";
-  token comment.block_open  = "/*";
-  token comment.block_close = "*/";
-}
-```
-
-#### String Styles
-
-With no flags, a string style processes backslash escapes (`\n`, `\t`, `\\`) and uses its pattern text as both the opening and the closing delimiter.
-
-```mld
-tokens {
-  token string.cstring = "\"";                  // "..."
-  token string.wstring = "w\"" [close "\""];    // w"..." closes on "
-}
-```
-
-| Flag | Description |
-|------|-------------|
-| `noescape` | Disable backslash escapes. Two consecutive close delimiters mean one literal close delimiter (the Pascal `''` convention). |
-| `close "X"` | Use `X` as the closing delimiter instead of the opening pattern. |
-
-#### Directives
-
-Directives are a **two-tier system**. Conditional-compilation directives are consumed by the **lexer** at lex time and never reach the parser. Every other directive is passed through as a regular token for a `stmt.directive_*` grammar rule to consume.
-
-```mld
-tokens {
-  directive_prefix = "@";
-
-  // Tier 1: consumed by the lexer
-  token directive.define  = "define" [define];
-  token directive.undef   = "undef"  [undef];
-  token directive.ifdef   = "ifdef"  [ifdef];
-  token directive.ifndef  = "ifndef" [ifndef];
-  token directive.elseif  = "elseif" [elseif];
-  token directive.else    = "else"   [else];
-  token directive.endif   = "endif"  [endif];
-
-  // Tier 2: passed to the parser as tokens
-  token directive.target        = "target";
-  token directive.optimize      = "optimize";
-  token directive.subsystem     = "subsystem";
-  token directive.exeicon       = "exeicon";
-  token directive.copydll       = "copydll";
-  token directive.linklibrary   = "linklibrary";
-  token directive.librarypath   = "librarypath";
-  token directive.modulepath    = "modulepath";
-  token directive.includepath   = "includepath";
-  token directive.breakpoint    = "breakpoint";
-  token directive.message       = "message";
-  token directive.unittestmode  = "unitTestMode";
-  // ... plus the version-info family
-}
-```
-
-| Flag | Meaning |
-|------|---------|
-| `define` | This token is `@define` |
-| `undef` | This token is `@undef` |
-| `ifdef` | This token is `@ifdef` |
-| `ifndef` | This token is `@ifndef` |
-| `elseif` | This token is `@elseif` |
-| `else` | This token is `@else` |
-| `endif` | This token is `@endif` |
-
-> [!IMPORTANT]
-> 🧱 This is why Myrissa has **two** conditional systems that look alike but are not. `@ifdef` is a Myrissa-level directive resolved by the lexer against a compile-time symbol table. `#if defined(...)` is a C++ preprocessor line that passes straight through to the generated C++ and is resolved by clang. They do not see each other's symbols.
-
-#### Structural Configuration
-
-Key-value assignments inside `tokens {}` configure the engine.
-
-```mld
-tokens {
-  casesensitive = true;
-  terminator    = delimiter.semicolon;
-  block_open    = keyword.begin;
-  block_close   = keyword.end;
-  hex_prefix    = "0x";
-  hex_prefix    = "0X";
-}
-```
-
-| Setting | Description |
-|---------|-------------|
-| `casesensitive = true/false;` | Keyword matching case sensitivity |
-| `identifier_start = "chars";` | Characters that may start an identifier |
-| `identifier_part = "chars";` | Characters that may continue an identifier |
-| `terminator = kind;` | Statement terminator token kind |
-| `block_open = kind;` | Block-open token kind |
-| `block_close = kind;` | Block-close token kind |
-| `directive_prefix = "text";` | Directive prefix characters |
-| `hex_prefix = "text";` | Hex literal prefix (repeatable) |
-| `binary_prefix = "text";` | Binary literal prefix |
-
-<a id="mld-types"></a>
-
-### 🔢 Types Block
-
-The `types {}` block connects three worlds: the **source type name** the user writes, the **internal type kind** the engine tracks, and the **C++ type** that comes out the far end. When a user writes `var x : int32;`, the types block says that `int32` is `type.int32` internally, and that `type.int32` becomes `int32_t` in C++.
-
-#### Type Keywords
-
-Map source type names to internal type kind strings.
-
-```mld
-types {
-  type int8     = "type.int8";
-  type int16    = "type.int16";
-  type int32    = "type.int32";
-  type int64    = "type.int64";
-  type uint8    = "type.uint8";
-  type uint16   = "type.uint16";
-  type uint32   = "type.uint32";
-  type uint64   = "type.uint64";
-  type float32  = "type.float32";
-  type float64  = "type.float64";
-  type boolean  = "type.boolean";
-  type char     = "type.char";
-  type wchar    = "type.wchar";
-  type string   = "type.string";
-  type wstring  = "type.wstring";
-  type pointer  = "type.pointer";
-  type set      = "type.set";
-}
-```
-
-#### Type Mappings
-
-Map internal type kinds to C++ output types.
-
-```mld
-types {
-  map "type.int8"    -> "int8_t";
-  map "type.int16"   -> "int16_t";
-  map "type.int32"   -> "int32_t";
-  map "type.int64"   -> "int64_t";
-  map "type.uint8"   -> "uint8_t";
-  map "type.uint16"  -> "uint16_t";
-  map "type.uint32"  -> "uint32_t";
-  map "type.uint64"  -> "uint64_t";
-  map "type.float32" -> "float";
-  map "type.float64" -> "double";
-  map "type.boolean" -> "bool";
-  map "type.char"    -> "char";
-  map "type.wchar"   -> "wchar_t";
-  map "type.string"  -> "std::string";
-  map "type.wstring" -> "std::wstring";
-  map "type.pointer" -> "void*";
-  map "type.set"     -> "MyrSet";
-}
-```
-
-This is the whole of "Myrissa's `int32` is C++'s `int32_t`." It is one line of editable text, not a compiler pass.
-
-#### Literal Type Mappings
-
-Connect AST node kinds produced by the parser to type kinds understood by the type system. Without these, a literal has no type.
-
-```mld
-types {
-  literal "expr.integer" = "type.int32";
-  literal "expr.float"   = "type.float64";
-  literal "expr.cstring" = "type.cstring";
-  literal "expr.cchar"   = "type.char";
-  literal "expr.wstring" = "type.wstring";
-  literal "expr.bool"    = "type.boolean";
-}
-```
-
-#### Type Compatibility
-
-Each `compatible` entry declares a source type, a target type, and the type the pair coerces to. This is how widening and promotion are defined. There is no built-in numeric tower; the matrix *is* the tower.
-
-```mld
-types {
-  // Signed widening
-  compatible "type.int8",  "type.int16" -> "type.int16";
-  compatible "type.int8",  "type.int32" -> "type.int32";
-  compatible "type.int16", "type.int32" -> "type.int32";
-  compatible "type.int32", "type.int64" -> "type.int64";
-
-  // Unsigned widening
-  compatible "type.uint8",  "type.uint16" -> "type.uint16";
-  compatible "type.uint16", "type.uint32" -> "type.uint32";
-  compatible "type.uint32", "type.uint64" -> "type.uint64";
-
-  // Float widening
-  compatible "type.float32", "type.float64" -> "type.float64";
-
-  // Integer to float promotion
-  compatible "type.int32", "type.float64" -> "type.float64";
-
-  // nil is assignable to any pointer
-  compatible "type.nil", "type.pointer";
-
-  // Character to string promotion
-  compatible "type.char",  "type.string"  -> "type.string";
-  compatible "type.wchar", "type.wstring" -> "type.wstring";
-}
-```
-
-When the `->` coercion target is omitted, it defaults to the target type.
-
-#### Declaration and Call Kinds
-
-Tell the semantic engine which node kinds are declarations and which are calls, and where a call node stores its callee name.
-
-```mld
-types {
-  decl_kind "stmt.var_decl";
-  call_kind "expr.call";
-  call_name_attr = "call.name";
-}
-```
-
-| Entry | Description |
-|-------|-------------|
-| `decl_kind "kind";` | Register a declaration node kind |
-| `call_kind "kind";` | Register a call node kind |
-| `call_name_attr = "attr";` | Attribute holding the callee name on call nodes |
-
-<a id="mld-grammar"></a>
-
-### 🌳 Grammar Block
-
-The `grammar {}` block turns a token stream into an AST. The engine runs a **Pratt parser**: every token can trigger a **prefix** handler (at the start of an expression), an **infix** handler (between two expressions), or a **statement** handler (at statement position).
-
-Which one a rule becomes is decided by its node-kind prefix and whether it declares a precedence.
-
-| Rule Shape | Registered As | Trigger |
-|------------|---------------|---------|
-| `rule expr.*` (no precedence) | Prefix | Its first `expect` / `consume` token |
-| `rule expr.* precedence left N` | Infix, left-associative | Its first `expect` / `consume` token |
-| `rule expr.* precedence right N` | Infix, right-associative | Its first `expect` / `consume` token |
-| `rule stmt.*` | Statement | Its first `expect` / `consume` token |
-
-#### Declarative Rule Vocabulary
-
-Inside a rule body, these forms are declarative shorthand. Anything they cannot express, you write imperatively (see [The Imperative Language](#mld-imperative)); the two mix freely in one body.
-
-| Syntax | Description |
-|--------|-------------|
-| `expect TOKEN_KIND;` | Assert the current token is `TOKEN_KIND` and consume it. Error if it is not. |
-| `consume TOKEN_KIND -> @attr;` | Consume the token and store its text as an attribute on the result node. |
-| `consume [K1, K2, ...] -> @attr;` | Consume if the current token is any of the listed kinds; store its text. |
-| `parse expr -> @attr;` | Parse a sub-expression at binding power 0 and add it as a child. |
-| `parse many stmt until KIND -> @attr;` | Parse statements until `KIND`; collect them into a block child. |
-| `optional { ... }` | Execute the block only if the next token permits it. |
-| `sync TOKEN_KIND;` | Declare an error-recovery point. |
-
-#### Prefix Rules
-
-Prefix rules fire when their trigger token appears at expression-start position: literals, identifiers, unary operators, grouped expressions, set literals.
-
-```mld
-grammar {
-  // Literals
-  rule expr.integer { consume literal.integer -> @value; }
-  rule expr.float   { consume literal.float   -> @value; }
-  rule expr.cstring { consume string.cstring  -> @value; }
-  rule expr.wstring { consume string.wstring  -> @value; }
-
-  // Keyword literals
-  rule expr.nil  { expect keyword.nil; }
-  rule expr.bool { consume keyword.true  -> @value; }
-  rule expr.bool { consume keyword.false -> @value; }
-
-  // Identifier
-  rule expr.ident { consume identifier -> @name; }
-
-  // Grouped expression
-  rule expr.grouped {
-    expect delimiter.lparen;
-    parse expr -> @inner;
-    expect delimiter.rparen;
-  }
-
-  // Unary operators bind at power 35
-  rule expr.not {
-    expect keyword.not;
-    let nd = getResultNode();
-    addChild(nd, parseExpr(35));
-  }
-  rule expr.negate {
-    expect op.minus;
-    let nd = getResultNode();
-    addChild(nd, parseExpr(35));
-  }
-
-  // Set literal: [a, b, x..y]
-  rule expr.set_literal {
-    expect delimiter.lbracket;
-    let nd = getResultNode();
-    if not checkToken("delimiter.rbracket") {
-      let elem = createNode("expr.set_element");
-      addChild(elem, parseExpr(0));
-      if matchToken("op.range") {
-        addChild(elem, parseExpr(0));
-      }
-      addChild(nd, elem);
-      while matchToken("delimiter.comma") {
-        let e2 = createNode("expr.set_element");
-        addChild(e2, parseExpr(0));
-        if matchToken("op.range") {
-          addChild(e2, parseExpr(0));
-        }
-        addChild(nd, e2);
-      }
-    }
-    requireToken("delimiter.rbracket");
-  }
-}
-```
-
-> [!WARNING]
-> ⚠️ The generic lexer produces `literal.integer` and `literal.float` tokens automatically, but the parser will **not** consume them without explicit prefix rules. Omit `rule expr.integer` and every numeric expression in your language fails to parse. This is the single most common mistake when starting a new `.mld`.
-
-#### Intrinsics as Prefix Rules
-
-Myrissa's intrinsics (`len`, `size`, `utf8`, `paramcount`, `paramstr`, `getmem`, `resizemem`, and the exception accessors) are not library functions. They are prefix rules that build an `expr.call` node with `call.name` pre-set, so the emitter sees an ordinary call.
-
-```mld
-grammar {
-  rule expr.call {
-    expect keyword.len;
-    let nd = getResultNode();
-    setAttr(nd, "call.name", "myr_len");
-    parseCallArgs(nd);
-  }
-
-  rule expr.call {
-    expect keyword.size;
-    let nd = getResultNode();
-    setAttr(nd, "call.name", "sizeof");
-    requireToken("delimiter.lparen");
-    setAttr(nd, "call.sizeof_type", currentText());
-    advance();
-    requireToken("delimiter.rparen");
-  }
-}
-```
-
-#### Infix Rules
-
-An infix rule fires when its trigger token appears *after* an already-parsed left expression. That left operand becomes **child 0** of the result node. Binding power decides grouping: `2 + 3 * 4` groups as `2 + (3 * 4)` because `*` (30) binds tighter than `+` (20).
-
-```mld
-grammar {
-  // Assignment: right-associative, power 2
-  rule expr.assign precedence right 2 {
-    consume [op.assign, op.plus_assign, op.minus_assign,
-             op.mul_assign, op.div_assign] -> @operator;
-    parse expr -> @right;
-  }
-
-  // Arithmetic
-  rule expr.binary precedence left 20 {
-    consume [op.plus, op.minus] -> @operator;
-    parse expr -> @right;
-  }
-  rule expr.binary precedence left 30 {
-    consume [op.multiply, op.divide] -> @operator;
-    parse expr -> @right;
-  }
-  rule expr.binary precedence left 30 {
-    consume [keyword.div, keyword.mod] -> @operator;
-    parse expr -> @right;
-  }
-
-  // Comparison
-  rule expr.binary precedence left 10 {
-    consume [op.eq, op.neq, op.lt, op.gt, op.lte, op.gte] -> @operator;
-    parse expr -> @right;
-  }
-
-  // Logical
-  rule expr.binary precedence left 8 {
-    consume [keyword.and, keyword.xor] -> @operator;
-    parse expr -> @right;
-  }
-
-  // Call: power 40
-  rule expr.call precedence left 40 {
-    expect delimiter.lparen;
-    let nd = getResultNode();
-    let left = getChild(nd, 0);
-    if nodeKind(left) == "expr.ident" {
-      setAttr(nd, "call.name", getAttr(left, "name"));
-    }
-    if not checkToken("delimiter.rparen") {
-      addChild(nd, parseExpr(0));
-      while matchToken("delimiter.comma") {
-        addChild(nd, parseExpr(0));
-      }
-    }
-    requireToken("delimiter.rparen");
-  }
-
-  // Array index: power 45
-  rule expr.array_index precedence left 45 {
-    expect delimiter.lbracket;
-    let nd = getResultNode();
-    addChild(nd, parseExpr(0));
-    requireToken("delimiter.rbracket");
-  }
-
-  // Field access: power 45
-  rule expr.field_access precedence left 45 {
-    expect delimiter.dot;
-    let nd = getResultNode();
-    setAttr(nd, "field.name", currentText());
-    advance();
-  }
-}
-```
-
-#### Binding Power Scale
-
-| Power | Category |
-|-------|----------|
-| 2 | Assignment (right-associative) |
-| 6 | Logical `or` |
-| 8 | Logical `and`, `xor` |
-| 10 | Comparison (`=`, `<>`, `<`, `>`, `<=`, `>=`) and set membership (`in`) |
-| 20 | Addition, subtraction |
-| 25 | Bit shift (`shl`, `shr`) |
-| 30 | Multiplication, division, `div`, `mod` |
-| 35 | Unary prefix (`not`, negate, address-of) |
-| 40 | Call |
-| 45 | Array index, field access |
-| 50 | Dereference |
 
 > [!TIP]
-> 💡 The precedence ladder in the [BNF Grammar](#myra-language-grammar) is not documentation *about* the parser. It is a reading of the numbers written in `myrissa_grammar.mld`. Change a number there and the ladder moves.
+> 💡 Use `cstr` when passing a Myrissa `string` to a C function that expects `const char*`. Use `wstr` when a Windows API expects `const wchar_t*`. Use `utf8` when you need an owned copy of a wide string as UTF-8.
 
-#### Statement Rules
+### 🗄️ Memory Management
 
-Statement rules fire at statement position. They are where a language's shape actually lives.
+The runtime backs Myrissa's memory intrinsics with standard C allocation functions.
 
-```mld
-grammar {
-  // if <expr> then <stmts> [else <stmts>] end
-  rule stmt.if {
-    expect keyword.if;
-    let nd = getResultNode();
-    addChild(nd, parseExpr(0));
-    requireToken("keyword.then");
+#### Typed Allocation: new / dispose
 
-    let thenBranch = createNode("stmt.then_branch");
-    while not checkToken("keyword.else") and not checkToken("keyword.end")
-          and not checkToken("eof") {
-      let s = parseStmt();
-      if s != nil { addChild(thenBranch, s); }
-    }
-    addChild(nd, thenBranch);
+`new` allocates memory for a typed pointer and default-constructs the value. `dispose` frees the memory and sets the pointer to `nil`:
 
-    if matchToken("keyword.else") {
-      let elseBranch = createNode("stmt.else_branch");
-      while not checkToken("keyword.end") and not checkToken("eof") {
-        let s = parseStmt();
-        if s != nil { addChild(elseBranch, s); }
-      }
-      addChild(nd, elseBranch);
-    }
+```myr
+type Point = record x: int32; y: int32; end;
 
-    requireToken("keyword.end");
-    matchToken("delimiter.semicolon");
-  }
-
-  // while <expr> do <stmts> end
-  rule stmt.while {
-    expect keyword.while;
-    let nd = getResultNode();
-    addChild(nd, parseExpr(0));
-    requireToken("keyword.do");
-    while not checkToken("keyword.end") and not checkToken("eof") {
-      let s = parseStmt();
-      if s != nil { addChild(nd, s); }
-    }
-    requireToken("keyword.end");
-    matchToken("delimiter.semicolon");
-  }
-
-  // for <ident> := <expr> (to|downto) <expr> do <stmts> end
-  rule stmt.for {
-    expect keyword.for;
-    let nd = getResultNode();
-    setAttr(nd, "for.var", currentText());
-    advance();
-    requireToken("op.assign");
-    addChild(nd, parseExpr(0));
-    if checkToken("keyword.to") {
-      setAttr(nd, "for.dir", "to");
-      advance();
-    } else {
-      requireToken("keyword.downto");
-      setAttr(nd, "for.dir", "downto");
-    }
-    addChild(nd, parseExpr(0));
-    requireToken("keyword.do");
-    while not checkToken("keyword.end") and not checkToken("eof") {
-      let s = parseStmt();
-      if s != nil { addChild(nd, s); }
-    }
-    requireToken("keyword.end");
-    matchToken("delimiter.semicolon");
-  }
-
-  // var { ident : type [= expr]; }
-  rule stmt.var_block {
-    expect keyword.var;
-    let nd = getResultNode();
-    while checkToken("identifier") {
-      let nameTok = currentText();
-      advance();
-      let v = createNode("stmt.var_decl");
-      setAttr(v, "var.name", nameTok);
-      requireToken("delimiter.colon");
-      setAttr(v, "var.type_text", collectTypeText());
-      if matchToken("op.eq") {
-        addChild(v, parseExpr(0));
-      }
-      requireToken("delimiter.semicolon");
-      addChild(nd, v);
-    }
-  }
-}
+var p: pointer to Point;
+new(p);              // allocate + zero-initialize
+p^.x := 42;
+p^.y := 99;
+dispose(p);          // free + set to nil
 ```
 
-#### Linkage: How `clink` Is Parsed
+#### Raw Allocation: getmem / freemem / resizemem
 
-Linkage is a **keyword**, not a string. `cpplink` is the default and is stamped before any check, so an absent linkage spec still produces a well-formed attribute.
+For unstructured byte buffers and C-style memory management:
 
-```mld
-grammar {
-  rule stmt.routine_decl {
-    expect keyword.routine;
-    let nd = getResultNode();
-
-    // Default first, then override if a spec is present.
-    setAttr(nd, "decl.linkage", "cpplink");
-    if checkToken("keyword.clink") {
-      setAttr(nd, "decl.linkage", "clink");
-      advance();
-    } else if checkToken("keyword.cpplink") {
-      setAttr(nd, "decl.linkage", "cpplink");
-      advance();
-    }
-
-    setAttr(nd, "decl.name", currentText());
-    advance();
-
-    // Parameters, return type, `external`, or a body follow.
-  }
-}
+```myr
+var buf: pointer to uint8;
+getmem(buf);                  // allocate
+resizemem(buf, 1024);         // resize to 1024 bytes
+// ... use buf ...
+freemem(buf);                 // free
 ```
 
-#### The Myrissa Rule Catalog
-
-What follows is the complete set of rules Myrissa actually registers. It is the language's surface, enumerated.
-
-**Prefix expressions:** `expr.integer`, `expr.float`, `expr.cstring`, `expr.cchar`, `expr.wstring`, `expr.nil`, `expr.bool`, `expr.ident`, `expr.self`, `expr.parent`, `expr.varargs`, `expr.not`, `expr.negate`, `expr.unary_plus`, `expr.address_of`, `expr.grouped`, `expr.set_literal`, `expr.pointer_cast`, plus the intrinsics that parse to `expr.call` (`len`, `size`, `utf8`, `paramcount`, `paramstr`, `getmem`, `resizemem`, `exccode`, `excmsg`).
-
-**Infix expressions:** `expr.assign` (2, right), `expr.binary` (6 / 8 / 10 / 20 / 30), `expr.shl` and `expr.shr` (25), `expr.in` (10), `expr.call` (40), `expr.array_index` (45), `expr.field_access` (45), `expr.deref` (50).
-
-**Statements:**
-
-| Group | Rules |
-|-------|-------|
-| Module | `stmt.module`, `stmt.exported` |
-| Declarations | `stmt.var_block`, `stmt.const_block`, `stmt.type_block`, `stmt.routine_decl`, `stmt.method_decl` |
-| Blocks | `stmt.begin_block`, `stmt.expr`, `stmt.self_expr`, `stmt.parent_expr` |
-| Control flow | `stmt.if`, `stmt.while`, `stmt.for`, `stmt.repeat`, `stmt.match`, `stmt.return`, `stmt.leave`, `stmt.skip` |
-| Exceptions | `stmt.guard`, `stmt.raiseexception`, `stmt.raiseexceptioncode` |
-| Memory | `stmt.create`, `stmt.destroy`, `stmt.getmem`, `stmt.freemem`, `stmt.resizemem`, `stmt.setlength` |
-| Output | `stmt.print`, `stmt.println` |
-| Testing | `stmt.test_block`, `stmt.testassert`, `stmt.testasserttrue`, `stmt.testassertfalse`, `stmt.testassertnil`, `stmt.testassertnotnil`, `stmt.testfail`, `stmt.testassertequalint`, `stmt.testassertequaluint`, `stmt.testassertequalfloat`, `stmt.testassertequalstr`, `stmt.testassertequalbool`, `stmt.testassertequalptr` |
-| Directives | `stmt.directive_target`, `stmt.directive_optimize`, `stmt.directive_subsystem`, `stmt.directive_exeicon`, `stmt.directive_copydll`, `stmt.directive_linklibrary`, `stmt.directive_librarypath`, `stmt.directive_modulepath`, `stmt.directive_includepath`, `stmt.directive_breakpoint`, `stmt.directive_message`, `stmt.directive_unittestmode`, `stmt.directive_addverinfo`, `stmt.directive_vimajor`, `stmt.directive_viminor`, `stmt.directive_vipatch`, `stmt.directive_viproductname`, `stmt.directive_videscription`, `stmt.directive_vifilename`, `stmt.directive_vicompanyname`, `stmt.directive_vicopyright` |
+| Intrinsic | Purpose |
+|-----------|---------|
+| `new(ptr)` | Allocate and default-construct a typed pointer |
+| `dispose(ptr)` | Free and set pointer to `nil` |
+| `getmem(ptr)` | Allocate raw memory |
+| `freemem(ptr)` | Free raw memory |
+| `resizemem(ptr, size)` | Resize an existing raw allocation |
 
 > [!NOTE]
-> 🖨️ There is no `writeln`. Myrissa's output statements are `print` and `println`, which lower to `std::print` and `std::println`.
+> `new`/`dispose` work with typed pointers and handle construction/destruction. `getmem`/`freemem`/`resizemem` work with raw bytes and do not initialize or finalize the memory. Use typed allocation when working with records; use raw allocation for byte buffers and interop.
 
-<a id="mld-semantics"></a>
+### 💻 Command-Line Arguments
 
-### 🧠 Semantics Block
+The runtime captures `main()` arguments at program startup and exposes them through two intrinsics.
 
-The `semantics {}` block decides whether a syntactically valid program is *meaningful*. Handlers walk the AST, push and pop scopes, declare and look up symbols, and raise diagnostics. An `on` handler fires once per node of the matching kind.
+```myr
+println("program: %s", paramstr(0));       // program name / path
+println("arg count: %d", paramcount());    // number of args (excludes program name)
 
-#### Declarative Vocabulary
-
-| Syntax | Description |
-|--------|-------------|
-| `scope "name" { ... }` | Push a named scope, run the body, pop it |
-| `scope @attr { ... }` | Push a scope named by an attribute's value |
-| `declare @attr as variable;` | Declare a symbol as a variable |
-| `declare @attr as routine;` | Declare a symbol as a routine |
-| `declare @attr as type;` | Declare a symbol as a type |
-| `declare @attr as constant;` | Declare a symbol as a constant |
-| `declare @attr as parameter;` | Declare a symbol as a parameter |
-| `declare @attr as KIND typed @type;` | Declare with type information attached |
-| `visit children;` | Visit every child of the current node |
-| `visit @attr;` | Visit the child named by an attribute |
-| `visit child[N];` | Visit the child at index N |
-| `lookup @attr -> let sym;` | Look a symbol up and bind it to a variable |
-| `lookup @attr or { ... };` | Look a symbol up; run the block if it is not found |
-
-#### Basic Handlers
-
-```mld
-semantics {
-  on program.root {
-    scope "global" {
-      visit children;
-    }
-  }
-
-  // Module: the module kind decides the build mode.
-  on stmt.module {
-    let kind = getAttr(node, "module.kind");
-    if kind == "exe" { setBuildMode("exe"); }
-    else if kind == "lib" { setBuildMode("lib"); }
-    else if kind == "dll" { setBuildMode("dll"); }
-
-    let mname = getAttr(node, "module.name");
-    setAttr(node, "mname", mname);
-    scope @mname {
-      visit children;
-    }
-  }
-
-  // Variable declaration.
-  on stmt.var_decl {
-    setAttr(node, "vname", getAttr(node, "var.name"));
-    setAttr(node, "vtype", getAttr(node, "var.type_text"));
-    declare @vname as variable typed @vtype;
-    visit children;
-  }
-
-  on expr.assign { visit children; }
-  on expr.call   { visit children; }
-  on expr.binary { visit children; }
-  on expr.ident  { }
-}
+var i: int32;
+for i := 1 to paramcount() do
+  println("arg %d: %s", i, paramstr(i));
+end;
 ```
 
-#### Imports Trigger Compilation
+| Intrinsic | Return Type | Purpose |
+|-----------|-------------|---------|
+| `paramcount()` | `int32` | Number of CLI arguments (excludes the program name) |
+| `paramstr(index)` | `string` | Get argument by index (0 = program name, 1..N = user args) |
 
-An import is not a file-inclusion. The semantic handler *recursively compiles the imported module*, with the parent's build configuration saved and restored around it so the child cannot corrupt it.
+### 🎲 Set Operations
 
-```mld
-semantics {
-  on stmt.import_item {
-    let iname = getAttr(node, "import.name");
-    setAttr(node, "iname", iname);
-    setAttr(node, "itype", "module");
+Sets are implemented as efficient bitmask structures supporting up to 64 elements with an arbitrary base offset. The runtime provides the underlying operations that the compiler emits for set expressions.
 
-    pushBuildState();          // protect the parent's config
-    setModuleExtension("myra");
-    compileModule(iname);      // recursive compile
-    popBuildState();           // restore it
+```myr
+var odds: set = [1, 3, 5, 7, 9];
+var primes: set = [2, 3, 5, 7];
 
-    declare @iname as variable typed @itype;
-  }
-}
+// Membership
+if 5 in odds then
+  println("5 is odd");
+end;
+
+// Union, intersection, difference
+var both: set = odds * primes;       // [3, 5, 7]
+var either: set = odds + primes;     // [1, 2, 3, 5, 7, 9]
+var oddOnly: set = odds - primes;    // [1, 9]
+
+// Equality
+if odds <> primes then
+  println("different sets");
+end;
 ```
 
-#### Overload Detection and Linkage Demotion
-
-C has no name mangling, so a `clink` routine cannot be overloaded. When Myrissa sees a second routine with a name it already knows, it **demotes** the linkage to `cpplink` and warns, rather than emitting C++ that will not link.
-
-```mld
-semantics {
-  on stmt.routine_decl {
-    let rname = getAttr(node, "decl.name");
-
-    // Build a signature key: "Name(type1,type2)"
-    let sig = rname + "(";
-    let first = true;
-    let pi = 0;
-    while pi < child_count() {
-      let pch = getChild(node, pi);
-      if nodeKind(pch) == "stmt.param_decl" {
-        if not first { sig = sig + ","; }
-        sig = sig + getAttr(pch, "param.type_text");
-        first = false;
-      }
-      pi = pi + 1;
-    }
-    sig = sig + ")";
-
-    // If this name already exists, every version of it must be C++-linked.
-    if symbolExistsWithPrefix(rname + "(") {
-      demoteCLinkageForPrefix(rname + "(");
-      warning("clink demoted to cpplink for previously declared overload(s) of '" + rname + "'");
-    }
-    if getAttr(node, "decl.linkage") == "clink" {
-      setAttr(node, "decl.linkage", "cpplink");
-      warning("clink demoted to cpplink for overloaded routine '" + rname + "'");
-    }
-
-    setAttr(node, "sig", sig);
-    declare @sig as routine;
-    scope @rname {
-      visit children;
-    }
-  }
-}
-```
-
-#### Multi-Pass Semantics
-
-Forward references need more than one walk. A `pass` block scopes a set of handlers to a single pass. Each pass walks the whole AST with only that pass's handlers active. The **scope tree persists** across passes; the scope *stack* resets to the root between them. So pass 1 can declare every routine, and pass 2 can resolve calls to routines declared later in the file.
-
-```mld
-semantics {
-  pass 1 "declarations" {
-    on stmt.routine_decl {
-      declare @name as routine;
-    }
-  }
-
-  pass 2 "analysis" {
-    on expr.ident {
-      lookup @name or {
-        error "undefined identifier '{@name}'";
-      };
-    }
-  }
-}
-```
-
-#### What Myrissa's Semantic Layer Actually Does
-
-| Feature | Mechanism |
-|---------|-----------|
-| **Overload detection** | Builds a `Name(type,type)` signature key and checks for an existing name prefix; demotes `clink` to `cpplink` when a collision is found. |
-| **Module compilation** | `stmt.import_item` calls `compileModule()` between `pushBuildState()` / `popBuildState()`. |
-| **Pointer access detection** | `expr.field_access` tests whether the left side is a pointer (directly, through a type alias, or through a call's return type) and stamps `pointer_access = "true"` so the emitter writes `->` instead of `.`. This is why Myrissa source uses a plain `.` through a pointer. |
-| **Float literal stamping** | `expr.assign` propagates the target type down into float literals on the right-hand side, so overload resolution picks the right one. |
-| **Variadic call detection** | `expr.call` looks for a `__va:` marker symbol and stamps the call as variadic. |
-
-<a id="mld-emitters"></a>
-
-### ⚙️ Emitters Block
-
-The `emitters {}` block produces the IR/native. Two kinds of handler:
-
-- **Statement emitters** write lines with `emitLine()`.
-- **Expression emitters** produce a string fragment with `emit`, which composes recursively through `exprToString()`.
-
-#### Statement Emitters
-
-```mld
-emitters {
-  on stmt.if {
-    let cond = exprToString(getChild(node, 0));
-    emitLine("if (" + cond + ") {");
-    indentIn();
-    emitNode(getChild(node, 1));         // then branch
-    indentOut();
-    if child_count() > 2 {
-      emitLine("} else {");
-      indentIn();
-      emitNode(getChild(node, 2));       // else branch
-      indentOut();
-    }
-    emitLine("}");
-  }
-
-  on stmt.while {
-    let cond = exprToString(getChild(node, 0));
-    emitLine("while (" + cond + ") {");
-    indentIn();
-    let wi = 1;
-    while wi < child_count() {
-      emitNode(getChild(node, wi));
-      wi = wi + 1;
-    }
-    indentOut();
-    emitLine("}");
-  }
-
-  on stmt.for {
-    let varName    = getAttr(node, "for.var");
-    let startExpr  = exprToString(getChild(node, 0));
-    let finishExpr = exprToString(getChild(node, 1));
-    let dir        = getAttr(node, "for.dir");
-
-    if dir == "to" {
-      emitLine("for (auto " + varName + " = " + startExpr +
-               "; " + varName + " <= " + finishExpr +
-               "; ++" + varName + ") {");
-    } else {
-      emitLine("for (auto " + varName + " = " + startExpr +
-               "; " + varName + " >= " + finishExpr +
-               "; --" + varName + ") {");
-    }
-    indentIn();
-    // body children
-    indentOut();
-    emitLine("}");
-  }
-
-  on stmt.println {
-    // lowers to std::println(...)
-    emitLine("std::println(" + args + ");");
-  }
-}
-```
-
-#### Expression Emitters
-
-`emit` hands a fragment back to whoever called `exprToString()`. This is where Myrissa's operator words become C++ symbols.
-
-```mld
-emitters {
-  on expr.binary {
-    let lhs = exprToString(getChild(node, 0));
-    let rhs = exprToString(getChild(node, 1));
-    let op  = getAttr(node, "operator");
-
-    if      op == "="   { op = "=="; }
-    else if op == "<>"  { op = "!="; }
-    else if op == "div" { op = "/";  }
-    else if op == "mod" { op = "%";  }
-    else if op == "and" { op = "&&"; }
-    else if op == "or"  { op = "||"; }
-    else if op == "xor" { op = "^";  }
-
-    emit "(" + lhs + " " + op + " " + rhs + ")";
-  }
-
-  on expr.assign {
-    let lhs = exprToString(getChild(node, 0));
-    let rhs = exprToString(getChild(node, 1));
-    let op  = getAttr(node, "operator");
-    if op == ":=" { op = "="; }
-    emit lhs + " " + op + " " + rhs;
-  }
-
-  on expr.ident   { emit @name; }
-  on expr.integer { emit @value; }
-  on expr.nil     { emit "nullptr"; }
-  on expr.self    { emit "this"; }
-  on expr.parent  { emit "Super"; }
-  on expr.cstring { emit "\"" + @value + "\""; }
-  on expr.wstring { emit "L\"" + @value + "\""; }
-
-  on expr.bool {
-    let val = getAttr(node, "value");
-    if val == "true" { emit "true"; } else { emit "false"; }
-  }
-}
-```
-
-Myrissa's `mod` becomes C++'s `%`, and `nil` becomes `nullptr`, because a line of editable text says so. Nothing is compiled into the compiler.
-
-#### Header vs Source Emission
-
-The emitter keeps two output buffers. Source is the default; pass `"header"` as a second argument to write to the header file instead. This is how `lib` and `dll` modules get a usable `.h`.
-
-```mld
-emitters {
-  on stmt.module {
-    emitLine("#include <cstdint>", "header");
-    emitLine("#include <string>",  "header");
-
-    emitLine("#include <cstdint>");
-    emitLine("#include <string>");
-  }
-}
-```
-
-#### Directive Emitters
-
-Directive emitters are the bridge from source-level `@directives` to the build pipeline. Each is a one-liner that forwards to a pipeline builtin.
-
-```mld
-emitters {
-  on stmt.directive_optimize    { setOptimize(getAttr(node, "value")); }
-  on stmt.directive_subsystem   { setSubsystem(getAttr(node, "value")); }
-  on stmt.directive_exeicon     { setExeIcon(getAttr(node, "value")); }
-  on stmt.directive_copydll     { addCopyDLL(getAttr(node, "value")); }
-  on stmt.directive_linklibrary { addLinkLibrary(getAttr(node, "value")); }
-  on stmt.directive_breakpoint  {
-    addBreakpoint(getNodeFile(node), getNodeLine(node));
-  }
-}
-```
-
-`@target` is the interesting one. The six target aliases are **not** defined in the langdef; they live in the Delphi host, and the langdef reaches them through the `setTargetAlias()` builtin, which returns false for a name it does not recognize.
-
-```mld
-// myrissa_utils.mld
-routine applyTarget(tr: string) -> bool {
-  if not setTargetAlias(tr) {
-    return false;      // caller raises a located error
-  }
-  return true;
-}
-```
-
-> [!IMPORTANT]
-> 🎯 Target resolution lives where the toolchain is driven from, not in the langdef. The alias vocabulary (`win64`, `winarm64`, `linux64`, `linuxarm64`, `macos64`, `wasm32`) is owned by `Myrissa.Build`. `setTargetAlias` is the only door between them.
-
-#### Node Walking
-
-| Function | Description |
-|----------|-------------|
-| `emitNode(node)` | Dispatch the emitter handler registered for that node's kind |
-| `emitChildren(node)` | Emit every child in sequence |
-| `exprToString(node)` | Render an expression subtree to a string |
-
-`exprToString` resolves in three steps: if an emitter handler exists for the node's kind, it runs in **string-capture mode**, intercepting `emit` calls instead of writing them out. Otherwise, if the node has exactly two children and an `@operator` attribute, it produces `left op right`. Failing both, the engine's default takes over.
-
-#### Myrissa's Emission Order
-
-The module emitter runs a fixed sequence, and the order is load-bearing.
-
-1. **Preprocessor directives and raw C++ statements** first, before any namespace opens.
-2. **Import includes** (`#include "module.h"`).
-3. For a `lib` module, the **namespace wrapper** opens.
-4. **Declarations**: types, constants, variables, routines.
-5. **Test block functions**, which must precede `main` so they are forward-declared by the time it calls them.
-6. **Module body** (`main`) last.
-
-The `stmt.exported` handler runs alongside this, writing forward declarations into the header: routine signatures, `extern` variable declarations, and type and constant definitions.
-
-<a id="mld-imperative"></a>
-
-### 🔁 The Imperative Language
-
-MLD is **Turing complete**. Handler bodies are not declarations, they are code. Variables, unbounded loops, conditionals, recursion, string operations, and error handling are all first-class, and they mix freely with the declarative forms in the same body.
-
-#### Variables and Assignment
-
-```mld
-let x    = 42;
-let name = "hello";
-let ok   = true;
-let n    = createNode("my_node");
-
-x    = x + 1;
-name = upper(name);
-```
-
-Variables are block-scoped. The interpreter keeps a stack of scope frames.
-
-#### Control Flow
-
-```mld
-// if / else if / else
-if x > 10 {
-  emitLine("big");
-} else if x > 5 {
-  emitLine("medium");
-} else {
-  emitLine("small");
-}
-
-// while
-let i = 0;
-while i < child_count() {
-  emitNode(getChild(node, i));
-  i = i + 1;
-}
-
-// for X in N  -- iterates 0 .. N-1; the loop variable is declared for you
-for i in child_count() {
-  emitNode(getChild(node, i));
-}
-
-// match, with multiple patterns per arm
-match getAttr(node, "module.kind") {
-  "exe" => {
-    setBuildMode("exe");
-  }
-  "dll" | "lib" => {
-    setBuildMode(getAttr(node, "module.kind"));
-  }
-  else => {
-    error "unknown module kind";
-  }
-}
-
-// guard: run the block only if the condition holds
-guard getAttr(node, "has_init") == "true" {
-  emit " = ";
-  emitNode(getChild(node, 0));
-}
-
-// return
-routine max(a: int, b: int) -> int {
-  if a > b { return a; }
-  return b;
-}
-```
-
-#### Operators
-
-| Category | Operators |
+| Operator | Operation |
 |----------|-----------|
-| Arithmetic | `+`, `-`, `*`, `/`, `%` |
-| Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=` |
-| Logical | `and`, `or`, `not` (both short-circuit) |
-| String concatenation | `+` (overloaded) |
-
-#### Operator Precedence (MLD's Own Expressions)
-
-Not to be confused with the binding powers you *define* for the target language. These govern expressions inside handler bodies.
-
-| Precedence | Operators | Associativity |
-|------------|-----------|---------------|
-| 1 (highest) | `not`, unary `-` | Right |
-| 2 | `*`, `/`, `%` | Left |
-| 3 | `+`, `-` | Left |
-| 4 | `==`, `!=`, `<`, `>`, `<=`, `>=` | Left |
-| 5 | `and` | Left (short-circuit) |
-| 6 (lowest) | `or` | Left (short-circuit) |
-
-#### Attribute Access
-
-`@name` reads and writes attributes on the **current context node**: the result node in a grammar rule, the visited node in a semantic or emitter handler.
-
-```mld
-grammar {
-  rule stmt.module {
-    expect keyword.module;
-    consume identifier -> @name;      // writes @name on the result node
-  }
-}
-
-emitters {
-  on stmt.module {
-    emitLine("// Module: " + @name);  // reads @name from the current node
-  }
-}
-```
-
-#### String Interpolation
-
-Inside a double-quoted string:
-
-- `{@attr}` reads an attribute from the current node
-- `{expr}` evaluates an expression
-- `\{` emits a literal `{`
-
-```mld
-error "undefined identifier '{@name}'";
-emitLine("// child count: {child_count()}");
-```
-
-#### Triple-Quoted Strings
-
-`"""` opens a multi-line literal. Leading whitespace is trimmed to the minimum common indent. No escape processing.
-
-#### Try / Recover
-
-If any statement inside `try` fails, control jumps to `recover`. This is how an emitter degrades gracefully instead of taking the compiler down.
-
-```mld
-try {
-  let lhs = exprToString(getChild(node, 0));
-  emit lhs;
-} recover {
-  error "malformed expression";
-  emit "/* ERROR */";
-}
-```
-
-#### Implicit Variables
-
-| Variable | Available In | Meaning |
-|----------|--------------|---------|
-| `node` | Every handler | The current AST node |
-| `true`, `false` | Everywhere | Boolean literals |
-| `nil` | Everywhere | The null value |
-
-#### Diagnostics
-
-Every diagnostic carries the source location of the current node, and every message supports interpolation.
-
-| Builtin | Severity |
-|---------|----------|
-| `error(msg)` | Compilation error |
-| `errorAt(node, msg)` | Error located at a specific node |
-| `warning(msg)` | Warning |
-| `hint(msg)` | Suggestion |
-| `note(msg)` | Informational |
-| `info(msg)` | General information |
-
-Both the call form and the statement form parse:
-
-```mld
-error("undefined identifier '" + nm + "'");
-error "undefined identifier '{@name}'";
-```
-
-<a id="mld-routines"></a>
-
-### 🧩 Routines, Constants, and Enums
-
-#### User-Defined Routines
-
-Routines are declared at the **top level**, outside any block, and are callable from any grammar, semantic, or emitter handler. They recurse. When called from an emitter context, a routine inherits the emitter's output builder, so it can call `emitLine()` and `indentIn()` directly.
-
-**Syntax:** `routine name(p1: type, p2: type) -> returnType { ... }`
-
-**Parameter and return types:** `string`, `int`, `bool`, `node`, `list`.
-
-```mld
-routine resolveType(typeText: string) -> string {
-  if typeText == "int8"  { return "int8_t";  }
-  if typeText == "int32" { return "int32_t"; }
-
-  if startsWith(typeText, "array of ") {
-    return "std::vector<" + resolveType(substr(typeText, 9, len(typeText) - 9)) + ">";
-  }
-  if startsWith(typeText, "pointer to ") {
-    return resolveType(substr(typeText, 11, len(typeText) - 11)) + "*";
-  }
-  if contains(typeText, ".") {
-    return replace(typeText, ".", "::");
-  }
-  return typeText;
-}
-
-routine emitBlock(blk: node) {
-  let i = 0;
-  while i < child_count(blk) {
-    emitNode(getChild(blk, i));
-    i = i + 1;
-  }
-}
-```
-
-#### Myrissa's Helper Routines
-
-Defined in `myrissa_helpers.mld` and `myrissa_utils.mld`. These are the shared machinery the rest of the definition leans on.
-
-| Routine | Returns | Purpose |
-|---------|---------|---------|
-| `resolveType(typeText)` | string | Map a Myrissa type name to a C++ type, including compound types |
-| `collectTypeText()` | string | Collect a compound type's text from the token stream |
-| `buildRoutineSig(nd, rname, retType)` | string | Build a C++ function signature from a routine declaration |
-| `parseCallArgs(nd)` | - | Parse a `( expr, expr, ... )` argument list |
-| `isDirectiveToken()` | bool | Is the current token a directive? |
-| `emitBlock(blk)` | - | Walk a node's children and emit each |
-| `emitArrayVarDecl(name, type)` | - | Emit an array variable declaration |
-| `emitPointerVarDecl(name, type)` | - | Emit a pointer variable declaration |
-| `emitRoutineForwardDecl(ch)` | - | Emit a routine forward declaration to the header |
-| `emitExportedVarForwardDecls(blk)` | - | Emit `extern` declarations to the header |
-| `emitExportedTypeToHeader(td)` | - | Emit a type declaration to the header |
-| `emitExportedConstToHeader(cd)` | - | Emit a const declaration to the header |
-| `stampFloatLiterals(n, targetType)` | - | Recursively stamp float literals with a resolved type |
-| `applyTarget(tr)` | bool | Resolve a target alias through `setTargetAlias()` |
-
-#### Constants
-
-Constants must be declared before anything references them.
-
-```mld
-const {
-  MAX_PARAMS       = 255;
-  DEFAULT_ALIGN    = 8;
-  ENABLE_OVERLOADS = true;
-}
-```
-
-#### Enums
-
-Members become global constants with sequential integer values starting at 0.
-
-```mld
-enum BuildMode { exe, lib, dll }
-```
-
-<a id="mld-fragments"></a>
-
-### 📦 Fragments, Imports, and Guards
-
-#### Fragments
-
-A `fragment` is a named, reusable block of top-level declarations, expanded with `include`. Fragments are an organizational tool *within* a file.
-
-```mld
-fragment common_operators {
-  token op.plus  = "+";
-  token op.minus = "-";
-  token op.star  = "*";
-  token op.slash = "/";
-}
-
-tokens {
-  include common_operators;
-}
-```
-
-#### Imports
-
-`import` loads an external `.mld` file. Paths resolve relative to the importing file, and **each path is processed only once**, so a diamond of imports is safe.
-
-```mld
-import "myrissa_tokens.mld";
-import "myrissa_utils.mld";
-import "myrissa_helpers.mld";
-import "myrissa_grammar.mld";
-import "myrissa_semantics.mld";
-import "myrissa_emitters.mld";
-```
-
-#### Top-Level Guards
-
-A `guard` includes or excludes declarations based on a constant. This is how a language feature is switched off at definition time rather than at runtime.
-
-```mld
-const {
-  FEATURE_GENERICS = false;
-}
-
-tokens {
-  guard FEATURE_GENERICS {
-    token keyword.generic = "generic";
-  }
-}
-```
-
-With `FEATURE_GENERICS = false`, the word `generic` is not a keyword. It lexes as an ordinary identifier.
-
-<a id="mld-builtins"></a>
-
-### 🛠️ Built-in Function Reference
-
-Every builtin the engine exposes, grouped by the context it is available in. Builtins in **Common** work everywhere; the rest are only meaningful in their own phase.
-
-#### Common: Node Operations
-
-| Function | Returns | Description |
-|----------|---------|-------------|
-| `nodeKind(node)` | string | The node's kind string |
-| `getAttr(node, key)` | string | Read an attribute from a node |
-| `getAttr(key)` | string | Read an attribute from the current context node |
-| `setAttr(node, key, value)` | - | Write an attribute onto a node |
-| `setAttr(key, value)` | - | Write an attribute onto the current context node |
-| `has_attr(name)` | bool | Does the current node carry this attribute? |
-| `getChild(node, index)` | node | Child at a zero-based index |
-| `childCount(node)` | int | Number of children of a node |
-| `child_count()` | int | Number of children of the current context node |
-| `child_count(node)` | int | Number of children of a node |
-| `createNode("kind")` | node | Create a new AST node |
-| `setKind(node, "kind")` | - | Change a node's kind |
-| `cloneNode(node)` | node | Deep-copy a node |
-| `addChild(parent, child)` | - | Append a child |
-| `setChild(parent, i, child)` | - | Replace the child at index `i` |
-| `removeChild(parent, i)` | - | Remove the child at index `i` |
-| `getResultNode()` | node | The rule's result node (grammar context) |
-| `setShared(key, value)` | - | Write to the cross-handler shared store |
-| `getShared(key)` | string | Read from the cross-handler shared store |
-| `getNodeFile(node)` | string | Source file a node came from |
-| `getNodeLine(node)` | int | Source line a node came from |
-
-#### Common: String Operations
-
-| Function | Returns | Description |
-|----------|---------|-------------|
-| `concat(a, b, ...)` | string | Concatenate (also spelled `a + b`) |
-| `upper(s)` | string | Upper case |
-| `lower(s)` | string | Lower case |
-| `trim(s)` | string | Strip leading and trailing whitespace |
-| `replace(s, find, repl)` | string | Replace every occurrence |
-| `len(s)` | int | Length |
-| `substr(s, start, count)` | string | Substring, zero-based start |
-| `startsWith(s, prefix)` | bool | Prefix test |
-| `endsWith(s, suffix)` | bool | Suffix test |
-| `contains(s, sub)` | bool | Containment test |
-| `intToStr(n)` | string | Integer to string |
-| `strToInt(s)` | int | String to integer (0 on failure) |
-| `fmtEscape(s)` | string | Escape a string for safe embedding in emitted C++ |
-
-#### Common: Diagnostics
-
-| Function | Description |
-|----------|-------------|
-| `error(msg)` | Raise a compilation error at the current node |
-| `errorAt(node, msg)` | Raise an error located at a specific node |
-| `warning(msg)` | Raise a warning |
-| `hint(msg)` / `note(msg)` / `info(msg)` | Lower-severity diagnostics |
-
-#### Parse Context
-
-Available inside `grammar { rule ... { } }` bodies.
-
-| Function | Returns | Description |
-|----------|---------|-------------|
-| `checkToken("kind")` | bool | Is the current token this kind? Does **not** consume. |
-| `matchToken("kind")` | bool | If the current token is this kind, consume it and return true |
-| `requireToken("kind")` | - | Assert the current token is this kind and consume it; error if not |
-| `advance()` | string | Consume the current token, return its text |
-| `currentText()` | string | Text of the current token |
-| `currentKind()` | string | Kind of the current token |
-| `peekKind()` | string | Kind of the next token (one-token lookahead) |
-| `peekKindAt(n)` | string | Kind of the token `n` positions ahead |
-| `parseExpr(power)` | node | Parse an expression with a minimum binding power |
-| `parseExprFrom(node, power)` | node | Continue parsing an expression from an existing left node |
-| `parseStmt()` | node | Parse the next statement |
-| `collectUntil(kind)` | string | Collect raw text until a token kind is reached |
-| `collectRaw()` | string | Collect raw text until delimiters balance |
-
-#### Semantic Context
-
-Available inside `semantics { on ... { } }` handlers, alongside the declarative `declare`, `lookup`, `scope`, and `visit` forms.
-
-| Function | Returns | Description |
-|----------|---------|-------------|
-| `symbolExistsWithPrefix(prefix)` | bool | Does any symbol start with this prefix? |
-| `demoteCLinkageForPrefix(prefix)` | int | Strip `clink` from every matching symbol; returns the count |
-| `lookupSymbolType(name)` | string | Look up a symbol's type string |
-| `compileModule(name)` | bool | Recursively compile a module |
-| `setModuleExtension(ext)` | - | File extension used to resolve modules |
-| `addModulePath(path)` | - | Add a module search directory |
-| `getModulePaths()` | string | The current module search paths |
-| `clearModulePaths()` | - | Clear the module search paths |
-
-#### Emit Context: Low-Level Output
-
-| Function | Description |
-|----------|-------------|
-| `emitLine(text)` | Write an indented line to the source buffer |
-| `emitLine(text, "header")` | Write to the header buffer instead |
-| `emit expr;` | Produce an expression fragment (expression emitters) |
-| `emit @attr;` | Produce an attribute's value as a fragment |
-| `blankLine()` | Write an empty line |
-| `indentIn()` | Increase the indent level |
-| `indentOut()` | Decrease the indent level |
-| `include(path)` | Emit an `#include` |
-
-#### Emit Context: Function Builder
-
-| Function | C++ Produced |
-|----------|--------------|
-| `func(name, returnType)` | `returnType name(` ... `) {` |
-| `param(name, type)` | Adds a parameter to the function being built |
-| `endFunc()` | `}` |
-
-#### Emit Context: Declarations and Statements
-
-| Function | C++ Produced |
-|----------|--------------|
-| `declVar(name, type)` | `type name;` |
-| `declVar(name, type, init)` | `type name = init;` |
-| `assign(lhs, rhs)` | `lhs = rhs;` |
-| `stmt(text)` | `text;` |
-| `returnVal(expr)` | `return expr;` |
-| `returnVoid()` | `return;` |
-| `ifStmt(cond)` | `if (cond) {` |
-| `elseIfStmt(cond)` | `} else if (cond) {` |
-| `elseStmt()` | `} else {` |
-| `endIf()` | `}` |
-| `whileStmt(cond)` | `while (cond) {` |
-| `endWhile()` | `}` |
-| `forStmt(var, init, cond, step)` | `for (auto var = init; cond; step) {` |
-| `endFor()` | `}` |
-| `breakStmt()` | `break;` |
-| `continueStmt()` | `continue;` |
-
-#### Emit Context: Types and Node Walking
-
-| Function | Returns | Description |
-|----------|---------|-------------|
-| `typeTextToKind(text)` | string | Resolve source type text to an internal type kind |
-| `typeToIR(kind)` | string | Resolve an internal type kind to a C++ type |
-| `exprToString(node)` | string | Render an expression subtree to a string |
-| `emitNode(node)` | - | Dispatch the emitter handler for a node |
-| `emitChildren(node)` | - | Emit every child in sequence |
-
-#### Pipeline: Build Configuration
-
-| Function | Accepted Values | Description |
-|----------|-----------------|-------------|
-| `setBuildMode(m)` | `"exe"`, `"lib"`, `"dll"` | Output kind |
-| `setTargetAlias(name)` | `win64`, `winarm64`, `linux64`, `linuxarm64`, `macos64`, `wasm32` | Resolve a target alias in the host. **Returns false** on an unknown name. |
-| `setPlatform(p)` | A native triple, e.g. `"x86_64-windows-gnu"` | Set the target triple directly |
-| `getPlatform()` | - | The current triple, e.g. to reject a construct a target cannot support |
-| `setOptimize(o)` | `"debug"`, `"releasesafe"`, `"releasefast"`, `"releasesmall"` | Optimization level |
-| `getOptimize()` | - | The current optimization level |
-| `setSubsystem(s)` | `"console"`, `"gui"` | Windows subsystem |
-| `setLineDirectives(b)` | bool | Emit `#line` directives into the generated C++ |
+| `[elements]` | Set literal (elements, ranges, or mixed) |
+| `in` | Membership test |
+| `+` | Union |
+| `*` | Intersection |
+| `-` | Difference |
+| `=` | Equality |
+| `<>` | Inequality |
 
 > [!TIP]
-> 💡 `getPlatform()` is how the langdef refuses a construct on a target that cannot support it. It is exactly how `guard` / `except` becomes a hard compile error on `wasm32`, where C++ exceptions are impossible.
+> 💡 Sets are stack-allocated bitmasks. Operations like union, intersection, and membership test compile down to single CPU bitwise instructions. Use them freely for flags, permission bits, and fast integer membership testing.
 
-#### Pipeline: Paths and Libraries
+### 📞 Variadic Functions
 
-| Function | Description |
-|----------|-------------|
-| `addIncludePath(path)` | Add a C++ include search path |
-| `addLibraryPath(path)` | Add a library search path |
-| `addLinkLibrary(name)` | Link against a library |
-| `addCopyDLL(path)` | Copy a DLL to the output directory |
-| `setModuleExtension(ext)` | File extension used to resolve modules |
-| `addModulePath(path)` | Add a module search directory |
+Myrissa supports C-style variadic functions using the `...` parameter syntax. The runtime provides a `varargs` structure for iterating over the variable arguments.
 
-#### Pipeline: Build State
-
-Save and restore the whole build configuration. This is what lets an imported module set its own include paths and link libraries without corrupting its parent's.
-
-| Function | Description |
-|----------|-------------|
-| `pushBuildState()` | Push the current build configuration onto a stack |
-| `popBuildState()` | Restore the most recently pushed configuration |
-
-#### Pipeline: Conditional Compilation
-
-These drive the `@ifdef` symbol table, not the C++ preprocessor.
-
-| Function | Returns | Description |
-|----------|---------|-------------|
-| `setDefine(name)` | - | Define a symbol |
-| `setDefine(name, value)` | - | Define a symbol with a value |
-| `removeDefine(name)` | - | Remove a defined symbol |
-| `hasDefine(name)` | bool | Is this symbol defined? |
-| `clearDefines()` | - | Remove every defined symbol |
-| `unsetDefine(name)` | - | Explicitly mark a symbol as undefined |
-| `removeUndefine(name)` | - | Remove an explicit undefine |
-| `hasUndefine(name)` | bool | Is this symbol explicitly undefined? |
-| `clearUndefines()` | - | Clear every explicit undefine |
-
-#### Pipeline: Version Info
-
-| Function | Description |
-|----------|-------------|
-| `setAddVerInfo(v)` | Enable the version resource |
-| `setExeIcon(path)` | Embed an icon into the executable |
-| `setVersionMajor(v)` / `setVersionMinor(v)` / `setVersionPatch(v)` | Version numbers |
-| `setProductName(v)` | Product name |
-| `setDescription(v)` / `setFileDescription(v)` | File description |
-| `setFilename(v)` / `setVIFilename(v)` | Original filename |
-| `setCompanyName(v)` | Company name |
-| `setCopyright(v)` / `setLegalCopyright(v)` | Copyright string |
-
-#### Pipeline: Debug
-
-| Function | Description |
-|----------|-------------|
-| `addBreakpoint(file, line)` | Record a breakpoint entry in the `.mbp` sidecar |
-
-<a id="mld-ebnf"></a>
-
-### 🧾 Formal Grammar (EBNF)
-
-The complete EBNF for the MLD meta-language itself. Brackets `[ ]` denote optionality, braces `{ }` denote zero-or-more repetition, parentheses `( )` group, and `|` separates alternatives.
-
-#### Lexical Elements
-
-```ebnf
-letter       = "A" | ... | "Z" | "a" | ... | "z" | "_" .
-digit        = "0" | ... | "9" .
-ident        = letter { letter | digit } .
-integer      = digit { digit } .
-string       = '"' { character | escapeSeq } '"' .
-tripleString = '"""' { character } '"""' .
-escapeSeq    = "\" ( "n" | "t" | "r" | "0" | "\" | '"' ) .
-comment      = "//" { character } newline .
-blockComment = "/*" { character } "*/" .
-```
-
-#### Reserved Words
-
-The meta-language is **case-sensitive** for all keywords and identifiers.
-
-| Category | Words |
-|----------|-------|
-| Structure | `language`, `version`, `tokens`, `types`, `grammar`, `semantics`, `emitters`, `section` |
-| Rules | `rule`, `on`, `token`, `optional`, `expect`, `consume`, `parse`, `many`, `until`, `sync`, `precedence`, `left`, `right` |
-| Declarations | `let`, `const`, `enum`, `routine`, `fragment`, `import`, `include` |
-| Control flow | `if`, `else`, `while`, `for`, `in`, `break`, `continue`, `return`, `match`, `guard`, `try`, `recover` |
-| Semantics | `declare`, `lookup`, `scope`, `visit`, `children`, `child`, `parent`, `as`, `typed`, `where`, `pass` |
-| Emission | `emit`, `to`, `indent`, `before`, `after`, `node` |
-| Diagnostics | `error`, `warning`, `hint`, `note`, `info` |
-| Literals | `true`, `false`, `nil` |
-| Logic | `and`, `or`, `not` |
-
-#### Built-in Types
-
-```
-string   text values
-int      integer values
-bool     boolean values
-node     AST node reference
-list     ordered collection
-```
-
-#### Operators and Delimiters
-
-```
-+    -    *    /    %
-==   !=   <    >    <=   >=
-=    ;    ,    .    :    @
-(    )    [    ]    {    }
-->   =>   |
-```
-
-#### Top-Level Structure
-
-```ebnf
-SourceFile     = LanguageDecl { TopLevelBlock } .
-LanguageDecl   = "language" ident "version" string ";" .
-TopLevelBlock  = TokenBlock | TypesBlock | GrammarBlock | SemanticsBlock
-               | EmitterBlock | ConstBlock | EnumDecl | RoutineDecl
-               | FragmentDecl | ImportStmt | IncludeStmt | GuardBlock .
-```
-
-#### Token Declarations
-
-```ebnf
-TokenBlock     = "tokens" "{" { TokenDecl | TokenConfig | GuardBlock | IncludeStmt } "}" .
-TokenDecl      = "token" TokenKind "=" string [ TokenFlags ] ";" .
-TokenKind      = ident "." ident .
-TokenFlags     = "[" TokenFlag { "," TokenFlag } "]" .
-TokenFlag      = "noescape" | "close" string
-               | "define" | "undef" | "ifdef" | "ifndef"
-               | "elseif" | "else" | "endif" .
-TokenConfig    = CaseSensitiveDecl | IdentStartDecl | IdentPartDecl
-               | StructuralDecl | HexPrefixDecl | BinaryPrefixDecl
-               | DirectivePrefixDecl .
-CaseSensitiveDecl   = "casesensitive" "=" ( "true" | "false" ) ";" .
-StructuralDecl      = ( "terminator" | "block_open" | "block_close" ) "=" TokenKind ";" .
-HexPrefixDecl       = "hex_prefix" "=" string ";" .
-BinaryPrefixDecl    = "binary_prefix" "=" string ";" .
-DirectivePrefixDecl = "directive_prefix" "=" string ";" .
-```
-
-#### Type Declarations
-
-```ebnf
-TypesBlock     = "types" "{" { TypeDecl | IncludeStmt | GuardBlock } "}" .
-TypeDecl       = TypeKeywordDecl | TypeMappingDecl | LiteralTypeDecl
-               | TypeCompatDecl | DeclKindDecl | CallKindDecl
-               | CallNameAttrDecl .
-TypeKeywordDecl  = "type" ident "=" string ";" .
-TypeMappingDecl  = "map" string "->" string ";" .
-LiteralTypeDecl  = "literal" string "=" string ";" .
-TypeCompatDecl   = "compatible" string "," string [ "->" string ] ";" .
-DeclKindDecl     = "decl_kind" string ";" .
-CallKindDecl     = "call_kind" string ";" .
-CallNameAttrDecl = "call_name_attr" "=" string ";" .
-```
-
-#### Grammar Rule Declarations
-
-```ebnf
-GrammarBlock   = "grammar" "{" { RuleDecl } "}" .
-RuleDecl       = "rule" NodeKind [ RuleModifiers ] "{" { RuleStmt } "}" .
-RuleModifiers  = "precedence" ( "left" | "right" ) integer .
-NodeKind       = ident "." ident .
-RuleStmt       = ExpectStmt | ConsumeStmt | ParseStmt | SetAttrStmt
-               | OptionalBlock | SyncDecl | HandlerStmt .
-ExpectStmt     = "expect" TokenRef ";" .
-ConsumeStmt    = "consume" TokenRef "->" "@" ident ";" .
-ParseStmt      = "parse" ( "expr" | "stmt" ) [ integer ] "->" "@" ident ";"
-               | "parse" "many" ( "expr" | "stmt" )
-                 [ "until" UntilSpec ] "->" "@" ident ";" .
-OptionalBlock  = "optional" "{" { RuleStmt } "}" .
-SyncDecl       = "sync" TokenKind ";" .
-TokenRef       = TokenKind | "[" TokenKind { "," TokenKind } "]" | "identifier" .
-```
-
-#### Semantic Handler Declarations
-
-```ebnf
-SemanticsBlock = "semantics" "{" { SemanticDecl | PassBlock } "}" .
-PassBlock      = "pass" integer string "{" { SemanticDecl } "}" .
-SemanticDecl   = "on" NodeKind "{" { SemanticStmt } "}" .
-SemanticStmt   = VisitStmt | DeclareStmt | LookupStmt | ScopeBlock | HandlerStmt .
-VisitStmt      = "visit" VisitTarget ";" .
-VisitTarget    = "children" | "@" ident | "child" "[" Expression "]" .
-DeclareStmt    = "declare" "@" ident "as" SymbolKind
-                 [ "typed" Expression ] [ WhereBlock ] ";" .
-SymbolKind     = "variable" | "routine" | "type" | "constant" | "parameter" .
-LookupStmt     = "lookup" "@" ident
-                 ( "->" "let" ident | "or" "{" { SemanticStmt } "}" ) ";" .
-ScopeBlock     = "scope" Expression "{" { SemanticStmt } "}" .
-```
-
-#### Emitter Handler Declarations
-
-```ebnf
-EmitterBlock   = "emitters" "{" { SectionDecl | EmitDecl | BeforeBlock | AfterBlock } "}" .
-SectionDecl    = "section" ident [ "indent" string ] ";" .
-EmitDecl       = "on" NodeKind "{" { EmitStmt } "}" .
-EmitStmt       = EmitToStmt | VisitStmt | IndentBlock | HandlerStmt .
-EmitToStmt     = "emit" [ "to" ident ":" ] Expression ";" .
-IndentBlock    = "indent" "{" { EmitStmt } "}" .
-```
-
-#### Expressions
-
-```ebnf
-Expression     = OrExpr .
-OrExpr         = AndExpr { "or" AndExpr } .
-AndExpr        = NotExpr { "and" NotExpr } .
-NotExpr        = [ "not" ] Comparison .
-Comparison     = Addition [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) Addition ] .
-Addition       = Term { ( "+" | "-" ) Term } .
-Term           = Factor { ( "*" | "/" | "%" ) Factor } .
-Factor         = AttrAccess | Ident | StringLiteral | IntLiteral
-               | BoolLiteral | "nil" | "(" Expression ")"
-               | FuncCall | InterpolatedString | TripleString .
-AttrAccess     = "@" ident .
-FuncCall       = ident "(" [ Expression { "," Expression } ] ")" .
-InterpolatedString = '"' { character | "{@" ident "}" | "{" Expression "}" } '"' .
-```
-
-#### Handler Body Logic
-
-```ebnf
-HandlerStmt    = LetStmt | AssignStmt | IfStmt | WhileStmt | ForStmt
-               | MatchStmt | GuardStmt | BreakStmt | ContinueStmt
-               | ReturnStmt | TryRecover | DiagStmt | FuncCallStmt | SetAttrStmt .
-LetStmt        = "let" ident "=" Expression ";" .
-AssignStmt     = ident "=" Expression ";" .
-IfStmt         = "if" Expression "{" { HandlerStmt } "}"
-                 { "else" "if" Expression "{" { HandlerStmt } "}" }
-                 [ "else" "{" { HandlerStmt } "}" ] .
-WhileStmt      = "while" Expression "{" { HandlerStmt } "}" .
-ForStmt        = "for" ident "in" Expression "{" { HandlerStmt } "}" .
-MatchStmt      = "match" Expression "{" { MatchArm } [ DefaultArm ] "}" .
-MatchArm       = Pattern "=>" "{" { HandlerStmt } "}" .
-DefaultArm     = "else" "=>" "{" { HandlerStmt } "}" .
-Pattern        = ( StringLiteral | IntLiteral | BoolLiteral )
-                 { "|" ( StringLiteral | IntLiteral | BoolLiteral ) } .
-GuardStmt      = "guard" Expression "{" { HandlerStmt } "}" .
-ReturnStmt     = "return" [ Expression ] ";" .
-TryRecover     = "try" "{" { HandlerStmt } "}" "recover" "{" { HandlerStmt } "}" .
-DiagStmt       = ( "error" | "warning" | "hint" | "note" | "info" ) Expression ";" .
-FuncCallStmt   = ident "(" [ Expression { "," Expression } ] ")" ";" .
-```
-
-#### Routines, Constants, Fragments, Imports
-
-```ebnf
-RoutineDecl    = "routine" ident "(" [ ParamList ] ")" [ "->" TypeName ]
-                 "{" { HandlerStmt } "}" .
-ParamList      = Param { "," Param } .
-Param          = ident ":" TypeName .
-TypeName       = "string" | "int" | "bool" | "node" | "list" .
-ConstBlock     = "const" "{" { ConstDecl } "}" .
-ConstDecl      = ident "=" Expression ";" .
-EnumDecl       = "enum" ident "{" ident { "," ident } "}" .
-FragmentDecl   = "fragment" ident "{" { TopLevelBlock } "}" .
-ImportStmt     = "import" string ";" .
-IncludeStmt    = "include" ident ";" .
-GuardBlock     = "guard" Expression "{" { TopLevelBlock | TokenDecl | TypeDecl } "}" .
-```
-
-#### Token Kind Naming Conventions
-
-| Category | Examples |
-|----------|----------|
-| `keyword.*` | `keyword.if`, `keyword.while`, `keyword.var` |
-| `op.*` | `op.plus`, `op.assign`, `op.neq` |
-| `delimiter.*` | `delimiter.lparen`, `delimiter.semicolon` |
-| `literal.*` | `literal.integer`, `literal.float`, `literal.hex` |
-| `string.*` | `string.cstring`, `string.wstring` |
-| `comment.*` | `comment.line`, `comment.block_open` |
-| `directive.*` | `directive.define`, `directive.optimize` |
-| `type.*` | `type.int32`, `type.string`, `type.boolean` |
-| `identifier` | bare, no dot |
-| `eof` | bare, no dot |
-
-#### Node Kind Naming Conventions
-
-| Category | Examples |
-|----------|----------|
-| `program.*` | `program.root` |
-| `stmt.*` | `stmt.if`, `stmt.var_decl`, `stmt.routine_decl`, `stmt.module` |
-| `expr.*` | `expr.ident`, `expr.call`, `expr.binary`, `expr.grouped` |
-
-`program.root` is the engine's root node kind. Every other node kind in the tree is one your `.mld` invented.
-
-### 🔨 Hacking Myrissa
-
-You do not rebuild the compiler to change the language. The `.mld` files are read at startup from `bin/res/language/`. Edit them in place and run the compiler again.
-
-| Goal | What to Change |
-|------|----------------|
-| **Rename a keyword** | One `token` line in `myrissa_tokens.mld`. |
-| **Add an operator** | Declare the token, add an infix `rule` with a binding power, add an `emitters` handler. |
-| **Change what C++ comes out** | Edit the emitter handler. Nothing else moves. |
-| **Add a statement** | Declare the keyword, write a `stmt.*` rule, add a semantic handler and an emitter. |
-| **Add a type** | A `type` line, a `map` line, and the `compatible` entries that let it coerce. |
-| **Switch a feature off** | Wrap its declarations in a top-level `guard` on a `const`. |
-
-> [!TIP]
-> 💡 The `.mld` files are the best documentation of Myrissa that exists, because they are not a description of the compiler. They **are** the compiler. When the prose and the `.mld` disagree, the `.mld` is right.
-
-<a id="tools"></a>
-
-## 🛠️ Tools
-
-Myrissa includes a complete native development toolchain: compiler, debugger, CImporter, language server, and test runner. The tools are designed to work both from the command line and through embeddable APIs.
-
-
-### 🧭 Toolchain Workflow
-
-| Step | Tool | Result |
-|------|------|--------|
-| 1️⃣ Write source | Editor + LSP | Diagnostics, completion, hover, references |
-| 2️⃣ Build | Compiler | Native EXE, DLL, LIB, or unit module |
-| 3️⃣ Debug | DAP debugger / REPL | Breakpoints, stepping, variables, call stack |
-| 4️⃣ Bind native code | CImporter | Myrissa declarations generated from C headers |
-| 5️⃣ Embed | `Myrissa.dll` API | Host applications can drive the compiler/tooling programmatically |
-
-> [!NOTE]
-> 🧰 The tools are designed to share the same compiler front end. That means diagnostics in the CLI, debugger, LSP, and API all come from the same language understanding.
-
-### ⚙️ Compiler
-
-The Myrissa compiler takes `.myr` source files and produces native output for `win64` or `linux64`, selected by the `@target` directive. A single compiler invocation handles lexing, parsing, semantic analysis, IR generation, SSA optimization, x64 code generation, and PE or ELF linking -- Linux binaries are cross-compiled from the Windows host with no external toolchain.
-
-
-#### ▶️ Basic Usage
-
-```
-myrc -s hello.myr                  // compile only
-myrc -s hello.myr -r               // compile and run
-myrc -s hello.myr -o build         // compile with custom output path
-myrc -s hello.myr -d               // compile and debug
-```
-
-
-#### 🎯 Output Targets
-
-| Target | Module Kind | Description |
-|--------|-------------|-------------|
-| EXE | `exe` | Standalone native executable (PE on win64, ELF on linux64) |
-| DLL | `dll` | Dynamic library with exported functions (`.dll` / `.so`) |
-| Static Library | `lib` | Static library, linkable by Myrissa or other compilers (`.lib` / `.a`) |
-| Unit Module | `unit` | Reusable module compiled inline into the importing module |
-
-
-#### ⚙️ Compiler Pipeline
-
-The compiler processes source through these stages:
-
-1. **Lexer**: tokenizes source text into a stream of tokens
-2. **Parser**: builds an abstract syntax tree (AST)
-3. **Semantics**: performs type checking, symbol resolution, and validation
-4. **IR generation**: converts the AST to intermediate representation
-5. **SSA optimization**: runs passes such as Mem2Reg, constant folding, and dead code elimination
-6. **x64 code generation**: performs instruction selection, register allocation, and encoding
-7. **PE/ELF linking**: builds valid PE64 or ELF64 images with sections, imports, exports, relocations, and metadata
-
-> [!NOTE]
-> The pipeline runs in-process. There is no separate linker step, no temporary object-file workflow, and no dependency on MSVC, MinGW, or another external toolchain.
-
-
-#### 🚀 Optimization Levels
-
-Control optimization with the `@optimize` directive (for example, `@optimize full;`):
-
-| Level | Description |
-|-------|-------------|
-| `debug` | No optimization; full debug information |
-| `none` | No optimization (same as debug, without debug metadata) |
-| `basic` | Constant folding, copy propagation, dead code elimination |
-| `full` | All optimizations including CSE and additional backend passes |
-
-
-#### 🏷️ Version Information
-
-Embed Windows version information in an EXE with version directives:
-
-```
-module exe myapp;
-
-@addverinfo on;
-@vimajor 1;
-@viminor 0;
-@vipatch 0;
-@viproductname "My Application";
-@videscription "A sample Myrissa application";
-@vicompanyname "My Company";
-@vicopyright "Copyright 2026";
-```
-
-
-### 🐞 Debugger
-
-The Myrissa debugger implements the Debug Adapter Protocol (DAP), making it compatible with VS Code and other DAP-capable editors.
-
-
-#### ✨ Features
-
-| Feature | Description |
-|---------|-------------|
-| Breakpoints | Source-line breakpoints and `@breakpoint` directives |
-| Stepping | Step in, step over, and step out |
-| Variables | Inspect local and global variables |
-| Call stack | Inspect stack frames |
-| Source mapping | Generated code maps back to `.myr` source lines |
-
-
-#### 📍 Using Breakpoints
-
-Add a breakpoint directly in source with the `@breakpoint` directive:
-
-```
-var x: int32 = compute_value();
-@breakpoint;                     // execution pauses here
-println("x = %d", x);           // inspect x before this runs
-```
-
-
-#### 💬 Interactive REPL
-
-Start a terminal-based debugging session from the command line:
-
-```
-myrc -s hello.myr -d
-```
-
-
-#### 🧩 DAP Server: VS Code Integration
-
-The debugger can run as a DAP server for editors that support Debug Adapter Protocol. This enables:
-
-- Breakpoint gutter markers
-- Variable watch panels
-- Call stack navigation
-- Step controls in the editor toolbar
-- Inline variable values
-
-> [!TIP]
-> Use `@optimize debug` while debugging so source mapping is complete and local variables are not optimized away.
-
-
-#### 📊 Three-Tier Output Model
-
-The debugger separates output into three levels so normal debugging stays readable:
-
-| Tier | Content | Visibility |
-|------|---------|------------|
-| Wire traffic | JSON-RPC DAP messages | Hidden unless verbose logging is enabled |
-| Operational status | Connection events, launch state, breakpoint hits | Status callback |
-| REPL UI | User-facing commands and output | Always visible in the REPL |
-
-
-### 🌉 CImporter
-
-CImporter generates Myrissa bindings from C header files. It parses declarations and emits the import definitions needed to call C libraries from Myrissa code.
-
-
-#### ✅ What It Handles
-
-| C Construct | Myrissa Output |
-|-------------|----------------|
-| Function declarations | `routine` with `external` clause |
-| Calling conventions | `cdecl` by default, with `stdcall` support |
-| Structs and unions | `record` and `overlay` types |
-| Enums | `choices` types |
-| Typedefs | `type` aliases |
-| Pointer types | `pointer to` declarations |
-| Arrays | `array` types |
-| `#define` constants | `const` declarations for numeric and string values |
-| Preprocessor guards | Handled automatically |
-
-
-#### ▶️ Usage
-
-CImporter is available through the `Myrissa.dll` API, allowing host applications to drive the import process programmatically. Hosts can control:
-
-- Which headers are parsed
-- Which symbols are imported
-- Naming and filtering rules
-- Output format
-- Calling convention overrides
-
-
-#### 📤 Example Output
-
-Given this C header:
-
-```c
-typedef struct {
-    float x, y, z;
-} Vector3;
-
-void DrawLine3D(Vector3 start, Vector3 end, int color);
-```
-
-CImporter produces Myrissa source similar to this:
-
-```
-type
-  Vector3 = record
-    x: float32;
-    y: float32;
-    z: float32;
-  end;
-
-routine DrawLine3D(start: Vector3; finish: Vector3; color: int32);
-  external "raylib.dll";
-```
-
-> [!NOTE]
-> C identifiers that conflict with Myrissa keywords are renamed. In the example above, the C parameter `end` becomes `finish`.
-
-
-### 🧠 Language Server (LSP)
-
-The Myrissa Language Server implements the Language Server Protocol for editor integration. It communicates over stdin/stdout using JSON-RPC and follows the standard LSP message model.
-
-
-#### ✨ Capabilities
-
-| Feature | Description |
-|---------|-------------|
-| Diagnostics | Real-time error and warning reporting as you type |
-| Completion | Context-aware completion for keywords, types, routines, and symbols |
-| Hover | Type and documentation information on mouse hover |
-| Go-to-definition | Navigate directly to symbol declarations |
-| Document symbols | Outline view of routines, types, variables, and constants |
-| References | Find symbol usages across the module |
-
-
-#### 🏗️ Architecture
-
-The LSP server runs in two modes:
-
-| Mode | Description |
-|------|-------------|
-| In-process | Runs inside the host application for embedded tooling scenarios |
-| Out-of-process | Runs as a standalone stdin/stdout JSON-RPC server |
-
-The LSP is accessed through the `Myrissa.dll` API (`Myr_LSP_*` functions) or launched as a standalone stdin/stdout JSON-RPC server. See the [API Reference](#api-reference) for embedding details.
-
-> [!TIP]
-> Diagnostics come from the full compiler pipeline, so the LSP reports semantic issues such as type mismatches and undeclared symbols, not just syntax errors.
-
-### 🧯 Tooling Troubleshooting
-
-| Problem | What to Check |
-|---------|---------------|
-| 🧱 Build fails before code generation | Start with syntax and semantic diagnostics. Fix the first source error first. |
-| 🔗 External call fails | Verify DLL name, exported symbol name, calling convention, and parameter sizes. |
-| 🧠 LSP has no diagnostics | Confirm the editor launched the Myrissa LSP process and that the workspace folder contains the source file. |
-| 🐞 Breakpoint is not hit | Confirm debug output was enabled and the source path matches the compiled file. |
-| 🌉 CImporter output needs adjustment | Check symbol filters, keyword-renaming behavior, and calling convention overrides. |
-
-### ✅ Toolchain Best Practices
-
-- 🚀 Use `@optimize full;` only after the debug build behaves correctly
-- 🧪 Keep small sample programs for imported C libraries
-- 🧭 Prefer explicit output paths in repeatable scripts
-- 🧠 Keep LSP and compiler versions from the same Myrissa release
-- 🧯 Preserve generated CImporter output separately from hand-written wrappers
-
-<a id="api-reference"></a>
-
-## 🔌 API Reference
-
-`Myrissa.dll` exposes a flat, C-compatible API for embedding the Myrissa toolchain in host applications. The DLL API is designed for tools, editors, build systems, game engines, and other applications that need compiler, debugger, CImporter, or LSP functionality without linking against Delphi runtime units.
-
-> [!NOTE]
-> The command-line compiler and the embeddable DLL serve different integration styles. Use the CLI for direct builds and automation. Use `Myrissa.dll` when another application needs to control Myrissa programmatically.
-
-
-### 📁 Binding Files
-
-Pre-built bindings for embedding `Myrissa.dll` are included in the `lib/` directory:
-
-| Language | Path | Description |
-|----------|------|-------------|
-| C/C++ | `lib/c/include/Myrissa.h` | Single-header dynamic loader. Define `MYRISSA_IMPLEMENTATION` in one translation unit before including. |
-| Delphi / Free Pascal | `lib/pascal/Myrissa.pas` | Dynamic import unit. Call `Myr_Load` / `Myr_Unload` at runtime. No compile-time dependency on Myrissa source units. |
-
-Both bindings load `Myrissa.dll` at runtime and resolve all exports dynamically.
-
-
-### 🧭 Embedding Checklist
-
-Before embedding `Myrissa.dll`, decide these host-side rules:
-
-- ♻️ Which component owns each handle and when it is destroyed
-- 🧵 Whether returned strings are copied immediately or freed after use
-- 🧯 How compiler errors are surfaced to users
-- 📡 Whether status callbacks are displayed, logged, or ignored
-- 🧵 Which threads are allowed to create and use handles
-- 📦 Where generated files, temporary outputs, or in-memory compilation artifacts are stored
-
-> [!IMPORTANT]
-> 🔒 Treat every handle as an owned resource. The embedding host should make lifetime rules obvious in its own wrapper layer.
-
-### 🧭 Design Principles
-
-| Principle | Description |
-|-----------|-------------|
-| **Handle-based** | Subsystems are represented by opaque handles. Internal Delphi types never cross the DLL boundary. |
-| **C-compatible** | Exports use `cdecl` and C-compatible values: integers, pointers, null-terminated UTF-8 strings, and callbacks. |
-| **Explicit lifecycle** | Every handle has a clear create/destroy pair. Ownership is visible at the call site. |
-| **Status-code returns** | API calls return status codes. Detailed diagnostics are retrieved through query functions. |
-| **Thread-isolated handles** | Handles are independent. Multiple compiler instances can run concurrently when each thread uses its own handle. |
-| **Clear string ownership** | Input strings are read-only. Returned strings are allocated by the DLL and must be released by the caller. |
-
-
-### 🧩 Subsystem Handles
-
-Each major subsystem is accessed through an opaque handle:
-
-| Handle | Subsystem | Description |
-|--------|-----------|-------------|
-| `MyrCompiler` | Compiler | Compiles `.myr` source to EXE, DLL, static library, in-memory executable, or unit module |
-| `MyrDebugger` | Debugger | DAP-compatible debugger with breakpoints, stepping, call stacks, and variable inspection |
-| `MyrDebugREPL` | Debug REPL | Interactive command-line debugger interface |
-| `MyrCImporter` | CImporter | C header parser and Myrissa binding generator |
-| `MyrLSP` | Language Server | LSP protocol handler for editor and IDE integration |
-
-
-### ♻️ Lifecycle Pattern
-
-Every subsystem follows the same create-configure-use-destroy pattern:
-
-```c
-// 1. Create a handle
-void* compiler = Myr_Compiler_Create();
-
-// 2. Configure
-Myr_Compiler_LoadFile(compiler, "hello.myr");
-Myr_Compiler_SetOutput(compiler, "output");
-
-// 3. Use
-uint32_t exitCode = 0;
-MyrBool result = Myr_Compiler_Compile(compiler, 0, &exitCode);
-
-// 4. Check for errors
-if (Myr_HasErrors(compiler)) {
-    Myr_PrintErrors(compiler);
-}
-
-// 5. Destroy
-Myr_Compiler_Destroy(compiler);
-```
-
-> [!WARNING]
-> ⚠️ Every `_create()` call must have a matching `_destroy()` call. Undestroyed handles retain memory and operating-system resources.
-
-
-### 🧯 Error Handling
-
-Handles maintain an internal diagnostic list. Use the generic error API with any subsystem handle:
-
-```c
-if (Myr_HasErrors(handle)) {
-    int count = Myr_GetErrorCount(handle);
-    for (int i = 0; i < count; i++) {
-        const char* msg = Myr_GetError(handle, i);
-        printf("Error: %s\n", msg);
-        Myr_Free(msg);
-    }
-    Myr_ClearErrors(handle);
-}
-```
-
-Error severity levels:
-
-| Level | Description |
-|-------|-------------|
-| `MYR_HINT` | Informational suggestion |
-| `MYR_WARNING` | Potential issue; compilation can continue |
-| `MYR_ERROR` | Recoverable failure; the requested operation did not complete |
-| `MYR_FATAL` | Unrecoverable failure; the handle may need to be destroyed |
-
-
-### ⚙️ Compiler API
-
-The compiler handle drives the full pipeline from source to native output:
-
-```c
-void* compiler = Myr_Compiler_Create();
-
-// Set source from a file path or from a string
-Myr_Compiler_LoadFile(compiler, "app.myr");
-// or: Myr_Compiler_LoadString(compiler, source_code, "app.myr");
-
-// Set output path
-Myr_Compiler_SetOutput(compiler, "output");
-
-// Optional configuration
-Myr_Compiler_SetDefine(compiler, "DEBUG", "");
-
-// Build
-uint32_t exitCode = 0;
-MyrBool result = Myr_Compiler_Compile(compiler, 0, &exitCode);
-
-Myr_Compiler_Destroy(compiler);
-```
-
-
-#### 🎯 Output Modes
-
-| Output (win64 / linux64) | Description |
-|--------------------------|-------------|
-| `.exe` / no extension | Native executable (PE on win64, ELF on linux64) |
-| `.dll` / `.so` | Dynamic library |
-| `.lib` / `.a` | Static library |
-
-
-### 🐞 Debugger API
-
-The debugger implements the Debug Adapter Protocol (DAP):
-
-```c
-void* server = Myr_DbgServer_Create();
-void* client = Myr_DbgClient_Create();
-
-// Start the debug server for an executable
-Myr_DbgServer_DebugExe(server, "app.exe", 0);
-int port = Myr_DbgServer_GetPort(server);
-
-// Connect the client
-Myr_DbgClient_Connect(client, "127.0.0.1", port);
-Myr_DbgClient_Initialize(client);
-Myr_DbgClient_Launch(client, "app.exe", 1);
-Myr_DbgClient_ConfigurationDone(client);
-
-// Set breakpoints, step, continue, inspect...
-Myr_DbgClient_StepOver(client);
-Myr_DbgClient_Continue(client);
-
-Myr_DbgClient_Destroy(client);
-Myr_DbgServer_Destroy(server);
-```
-
-
-### 🌉 CImporter API
-
-The CImporter parses C headers and generates Myrissa bindings:
-
-```c
-void* importer = Myr_CImporter_Create();
-
-// Configure
-Myr_CImporter_SetHeader(importer, "raylib.h");
-Myr_CImporter_SetDllName(importer, "raylib.dll");
-Myr_CImporter_SetModuleName(importer, "raylib");
-Myr_CImporter_SetOutputPath(importer, "output");
-
-// Parse and generate
-MyrBool result = Myr_CImporter_Process(importer);
-
-Myr_CImporter_Destroy(importer);
-```
-
-
-#### 🔗 Binding Mode
-
-`Myr_CImporter_SetBindingMode()` accepts `MYR_BIND_DYNAMIC` (0), the only binding mode currently supported. The parameter is retained for ABI stability; all values map to dynamic binding.
-
-
-#### 📦 Cross-Platform DLL Copying
-
-`Myr_CImporter_AddCopyDll()` registers a shared library to be copied alongside built programs, per target. The generated binding emits a target-conditional `@copydll` block in its module header:
-
-```c
-Myr_CImporter_AddCopyDll(importer, MYR_TARGET_WIN64,   "win64/raylib.dll");
-Myr_CImporter_AddCopyDll(importer, MYR_TARGET_LINUX64, "linux64/libraylib.so.550");
-```
-
-Targets: `MYR_TARGET_WIN64` (0), `MYR_TARGET_LINUX64` (1).
-
-
-### 🧠 LSP API
-
-The language server can be hosted in-process or run as a stdin/stdout JSON-RPC server:
-
-```c
-void* lsp = Myr_LSP_Create();
-
-// In-process mode: open documents and query
-Myr_LSP_SetWorkspaceRoot(lsp, "/path/to/project");
-Myr_LSP_OpenDocument(lsp, "file:///app.myr", source_text);
-const char* diag = Myr_LSP_GetDiagnostics(lsp, "file:///app.myr");
-Myr_Free(diag);
-
-// Out-of-process mode: run as stdin/stdout server
-Myr_LSP_Run(lsp);  // blocks until shutdown
-
-Myr_LSP_Destroy(lsp);
-```
-
-| Mode | Description |
-|------|-------------|
-| In-process | Use `Myr_LSP_OpenDocument()`, `Myr_LSP_GetDiagnostics()`, `Myr_LSP_Hover()`, etc. directly from the host |
-| Out-of-process | Call `Myr_LSP_Run()` for a standalone stdin/stdout JSON-RPC server |
-
-
-### 🧩 Additional Subsystems
-
-Beyond the core compiler, debugger, CImporter, and LSP handles, the DLL also exports these subsystems:
-
-| Subsystem | Prefix | Description |
-|-----------|--------|-------------|
-| Console | `Myr_Console_*` | Terminal output, cursor control, color, progress bars, spinners, and input |
-| Utils | `Myr_Utils_*` | Process launching, path helpers, PE validation, version info, environment variables |
-| Console Menu | `Myr_Menu_*` | Interactive console menu with items, separators, submenus, and color |
-| Tester | `Myr_Tester_*` | Test registration, execution, filtering, and result reporting |
-
-See the binding files in `lib/` for the complete list of exported functions in each subsystem.
-
-
-### 🧵 String Contract
-
-All strings crossing the DLL boundary are null-terminated UTF-8.
-
-| Direction | Rule |
-|-----------|------|
-| **Input**: caller to DLL | Read-only. The DLL copies internally when it needs to retain the data. |
-| **Output**: DLL to caller | Heap-allocated. Caller must free the returned string with `Myr_Free()`. |
-| **Callbacks** | Valid only for the duration of the callback. Copy the string if you need to keep it. |
-
-> [!WARNING]
-> ⚠️ Every function that returns a heap-allocated `const char*` must be paired with `Myr_Free()`. Forgetting to free returned strings will leak memory.
-
-
-### 📡 Status Callbacks
-
-Subscribe to compiler progress and status events:
-
-```c
-void my_callback(const char* message, void* user_data) {
-    printf("Status: %s\n", message);
-}
-
-Myr_Compiler_SetStatusCallback(compiler, my_callback, NULL);
-```
-
-> [!NOTE]
-> The API surface is actively being finalized. Function signatures shown here document the intended design pattern. Check release notes or generated headers for the definitive exported names and parameters for a specific release.
-
-### 🧱 Host Wrapper Pattern
-
-Most host applications should wrap raw handles in a small language-specific class or record that owns cleanup.
-
-```c
-void* compiler = Myr_Compiler_Create();
-if (!compiler) {
-    return MYR_ERROR;
-}
-
-// Configure, build, query diagnostics...
-
-Myr_Compiler_Destroy(compiler);
-compiler = NULL;
-```
-
-A wrapper should usually provide:
-
-- ♻️ automatic `_destroy()` in its destructor/finalizer
-- 🧯 helper methods that collect and clear diagnostics
-- 🧵 safe copying of returned UTF-8 strings
-- 📡 optional progress/status callback routing
-- 🔒 a clear rule for whether the wrapper is thread-confined or thread-safe
-
-### 🧪 API Integration Smoke Test
-
-A minimal host integration should prove these operations before adding advanced features:
-
-1. 🚀 Create and destroy a compiler handle
-2. 📄 Compile a tiny `module exe` source file
-3. 🧯 Retrieve diagnostics from a deliberately broken source file
-4. 🧵 Retrieve and free at least one returned string
-5. 📡 Receive at least one status callback
-6. ⚡ Compile a tiny module to memory if the host needs in-memory execution
-
-> [!TIP]
-> 💡 Build the host wrapper around the lifecycle pattern first. Once create/configure/use/destroy is bulletproof, debugger, CImporter, and LSP hosting become much easier to add.
-
-<a id="how-to-guide"></a>
-
-## 🧪 How-To Guide
-
-Practical recipes for common Myrissa tasks. Each recipe is intentionally small, focused, and written as a complete module you can paste into a `.myr` file.
-
-> [!TIP]
-> These recipes are meant for copying, experimenting, and adapting. For exact language rules, see [Language Reference](#language-reference).
-
-
-### 🗺️ Recipe Map
-
-| Need | Recipe |
-|------|--------|
-| 🖨️ Output text | Print to the console |
-| 📦 Store values | Variables and constants |
-| 🚦 Branch or loop | Control flow |
-| 🔧 Reuse logic | Routines and var parameters |
-| 📋 Model data | Records, arrays, choices, sets, overlays, and objects |
-| 📍 Work close to memory | Pointers, allocation, DLLs, and Windows API calls |
-| 🎮 Use a C library | Vendor bindings (raylib, SDL3) |
-| 🛡️ Recover from failures | Exceptions and guards |
-| 🧪 Verify behavior | Unit tests and assertions |
-
-> [!TIP]
-> 💡 Recipes are meant to be copied. Rename the module, compile it, then change one thing at a time.
-
-### 🖨️ How Do I Print to the Console?
-
-Use `print` when you do not want a newline and `println` when you do. Both support C-style format strings:
-
-```
-module exe hello;
-begin
-  println("Hello, world!");
-  println("Name: %s, Age: %d", "Alice", 30);
-  println("Pi: %f", 3.14159);
-  print("no newline");
-  print(" here\n");
-end.
-```
-
-Common format specifiers:
-
-| Specifier | Type |
-|-----------|------|
-| `%d` | int32 |
-| `%lld` | int64 |
-| `%f` | float32/float64 |
-| `%s` | string |
-| `%x` | hex |
-
-
-### 📦 How Do I Work with Variables and Constants?
-
-```
-module exe vars;
-
-const
-  MAX: int32 = 100;
-  GREETING: string = "Hello";
-
-var
-  count: int32 = 0;
-  name: string = "Myrissa";
-  pi: float64 = 3.14159;
-
-begin
-  count := count + 1;
-  println("%s says %s (count=%d, pi=%f)", name, GREETING, count, pi);
-end.
-```
-
-
-### 🚦 How Do I Use Control Flow?
-
-#### 🔀 If/Else
-
-```
-module exe flow_if;
-var
-  x: int32 = 42;
-begin
-  if x > 0 then
-    println("positive");
-  else
-    if x < 0 then
-      println("negative");
-    else
-      println("zero");
-    end;
-  end;
-end.
-```
-
-#### 🔁 While Loop
-
-```
-module exe flow_while;
-var
-  i: int32 = 0;
-begin
-  while i < 5 do
-    println("i = %d", i);
-    i += 1;
-  end;
-end.
-```
-
-#### 🔂 For Loop
-
-```
-module exe flow_for;
+```myr
+routine print_ints(const count: int32; ...);
 var
   i: int32;
 begin
-  for i := 0 to 4 do
-    println("up: %d", i);
+  for i := 0 to varargs.count - 1 do
+    println("%d", varargs.next(int32));
   end;
-
-  for i := 4 downto 0 do
-    println("down: %d", i);
-  end;
-end.
+end;
 ```
 
-#### 🔄 Repeat/Until
+Inside a variadic function body, the implicit `varargs` object provides:
 
-```
-module exe flow_repeat;
-var
-  n: int32 = 1;
-begin
-  repeat
-    println("%d", n);
-    n *= 2;
-  until n > 100;
-end.
-```
+| Member | Purpose |
+|--------|---------|
+| `varargs.count` | Number of variadic arguments passed |
+| `varargs.next(Type)` | Extract the next argument as `Type` and advance |
 
-#### 🎯 Match (Pattern Matching)
+> [!NOTE]
+> The caller must pass the correct count as the first parameter, and the types of variadic arguments must match what `varargs.next(Type)` expects. There is no runtime type checking on variadic arguments -- this is a low-level C ABI feature.
 
-```
-module exe flow_match;
-var
-  day: int32 = 3;
-begin
-  match day of
-    1: println("Monday");
-    2: println("Tuesday");
-    3: println("Wednesday");
-    4: println("Thursday");
-    5: println("Friday");
-    6, 7: println("Weekend");
-    else
-      println("Unknown");
-  end;
-end.
-```
+### 🧪 Unit Testing
 
+Myrissa has a built-in test framework. Test blocks are declared after `end.` and are only compiled when `@unittestmode on;` is active. The runtime registers each test and provides assertion functions.
 
-### 🔧 How Do I Write and Call Routines?
+#### Declaring Tests
 
-```
-module exe routines;
+```myr
+module exe mylib;
+@unittestmode on;
 
-routine add(a: int32; b: int32): int32;
+routine add(const a: int32; const b: int32): int32;
 begin
   return a + b;
 end;
 
-routine greet(name: string);
+end.
+
+test "addition works"
 begin
-  println("Hello, %s!", name);
+  asserteq(5, add(2, 3));
+  asserteq(0, add(-5, 5));
 end;
+
+test "edge cases"
+begin
+  asserteq(0, add(0, 0));
+  asserttrue(add(1, 1) > 0);
+end;
+```
+
+#### Assertion Functions
+
+| Assertion | Purpose | Example |
+|-----------|---------|---------|
+| `assert(expr)` | Fail if `expr` is false | `assert(x > 0)` |
+| `asserttrue(expr)` | Fail if `expr` is not true | `asserttrue(flag)` |
+| `assertfalse(expr)` | Fail if `expr` is not false | `assertfalse(err)` |
+| `asserteq(expected, actual)` | Fail if values are not equal | `asserteq(5, result)` |
+| `asserteqf(expected, actual, epsilon)` | Float equality within tolerance | `asserteqf(3.14, pi, 0.01)` |
+| `assertnil(expr)` | Fail if `expr` is not `nil` | `assertnil(p)` |
+| `assertnotnil(expr)` | Fail if `expr` is `nil` | `assertnotnil(p)` |
+| `assertfail("msg")` | Unconditional failure | `assertfail("not implemented")` |
+
+All assertions are non-aborting -- a failed assertion records the failure and continues. Multiple failures accumulate per test, and the test runner reports all of them at the end.
+
+> [!NOTE]
+> `asserteq` is type-dispatched. It works with integers, floats, strings, wide strings, booleans, and pointers. For floating-point comparison with tolerance, use `asserteqf` and pass an explicit epsilon value.
+
+### 🖥️ Console Initialization
+
+The runtime initializes the console at program startup to ensure correct output behavior across platforms.
+
+On Windows, this sets the console output code page to UTF-8 (`SetConsoleOutputCP(CP_UTF8)`) and enables ANSI escape sequence processing for colored output. On Linux, no special initialization is needed -- terminals handle UTF-8 and ANSI natively.
+
+This happens automatically. You do not need to call any initialization function.
+
+### 📊 Output: print and println
+
+Myrissa's `print` and `println` call the C runtime's `printf` directly, so the format string uses standard C conversion specifiers.
+
+```myr
+println("Hello, %s!", cstr(name));         // with newline
+print("no newline here");                  // without newline
+println("%d + %d = %d", a, b, a + b);      // multiple values
+```
+
+| Specifier | Argument type |
+|-----------|---------------|
+| `%d` | `int8`..`int32`, `uint8`..`uint16`, `boolean`, `char` |
+| `%u` | `uint32` |
+| `%lld` / `%llu` | `int64` / `uint64` |
+| `%f`, `%g`, `%e` | `float32`, `float64` |
+| `%s` | `const char*` -- pass a managed `string` through `cstr()` |
+| `%c` | `char` |
+| `%p` | any pointer |
+
+The compiler reads the format string at compile time and converts a float argument to an integer when the matching specifier is an integer conversion, so `%d` with a `float64` prints the truncated value rather than garbage. It does not otherwise validate the specifier against the argument type -- a `%s` with a non-string argument is undefined behaviour, exactly as in C.
+
+| Intrinsic | Purpose |
+|-----------|---------|
+| `print(fmt, args...)` | Formatted output, no trailing newline |
+| `println(fmt, args...)` | Formatted output with trailing newline |
+
+### 📏 Size and Length Intrinsics
+
+Two intrinsics let you query the size and length of types and values at runtime.
+
+```myr
+println("int32 is %d bytes", size(int32));         // 4
+println("Point is %d bytes", size(Point));          // 8 (two int32 fields)
+
+var s: string = "hello";
+println("length = %d", len(s));                    // 5
+
+var arr: array of int32;
+setlength(arr, 10);
+println("array length = %d", len(arr));            // 10
+```
+
+| Intrinsic | Purpose |
+|-----------|---------|
+| `size(type_or_expr)` | Byte size of a type or expression |
+| `len(expr)` | Length of a string, wstring, or dynamic array |
+| `setlength(arr, count)` | Resize a dynamic array to `count` elements |
+
+### 🔧 Intrinsics Summary
+
+All intrinsics are built into the language -- they are not library functions and cannot be redefined or overridden. The compiler lowers each one directly to native code or to a runtime call.
+
+| Category | Intrinsics |
+|----------|-----------|
+| **Output** | `print`, `println` |
+| **Strings** | `utf8`, `wstr`, `cstr`, `len` |
+| **Memory** | `new`, `dispose`, `getmem`, `freemem`, `resizemem`, `setlength` |
+| **Sizing** | `size`, `len` |
+| **CLI** | `paramcount`, `paramstr` |
+| **Exceptions** | `throw`, `throwcode`, `exccode`, `excmsg` |
+| **Testing** | `assert`, `asserttrue`, `assertfalse`, `asserteq`, `asserteqf`, `assertnil`, `assertnotnil`, `assertfail` |
+| **Variadics** | `varargs.count`, `varargs.next` |
+| **Interop** | `cpp` |
+
+> [!TIP]
+> 💡 Intrinsics look like function calls but are resolved at compile time. The compiler knows their exact semantics and emits optimized code for each one -- there is no function call overhead.
+
+<a id="debugging"></a>
+
+## 🐛 Debugging
+
+Myrissa has built-in support for source-level debugging. A debug build writes a `.mdbg` file beside the executable or DLL that maps machine code back to your `.myr` source, and the compiler includes a native debugger that reads it and speaks the Debug Adapter Protocol (DAP), making it compatible with VS Code and other DAP-capable editors. The debugger currently runs against `win64` binaries.
+
+### 🔴 The @breakpoint Directive
+
+Place `@breakpoint;` anywhere in your code to mark a debugger breakpoint location:
+
+```myr
+routine calculate(a: int32; b: int32): int32;
+  var result: int32;
+begin
+  result := a + b;
+  @breakpoint;    // debugger will stop here
+  return result;
+end;
+```
+
+The compiler does not emit any code for `@breakpoint`. Instead, it records the source location in the AST, and the debugger sets a native breakpoint at the corresponding machine address. This means breakpoints have zero overhead in release builds -- they are only active when the debugger is attached.
+
+You can place `@breakpoint;` inside routines, init blocks, final blocks, and the main program body.
+
+### 🗺️ Source-Level Debug Info
+
+When you build with debug info enabled, the compiler writes a `.mdbg` file next to the output binary (`hello.exe` gets `hello.mdbg`). It is a compact binary sidecar, not embedded in the executable, so release binaries carry nothing extra.
+
+The `.mdbg` file records:
+
+| Table | Contents |
+|-------|----------|
+| **Header** | Magic `MDBG`, format version, `.text` and `.data` section RVAs so code offsets can be turned into process addresses |
+| **Source files** | Every `.myr` file that contributed code |
+| **Functions** | Name, start and end code offset, parameter and local counts |
+| **Lines** | Code offset to (file, line, column) mapping for every statement, so the debugger can step by source line and show `.myr` filenames in stack traces |
+| **Variables** | Name, type, and location (register or RBP-relative stack slot) of every parameter, local, and global, with the code range over which the location is valid |
+| **Breakpoints** | The (file, line) of every `@breakpoint;` directive, so they are armed automatically when the debugger attaches |
+
+The debugger loads this file, sets native breakpoints at the recorded addresses, and walks the stack using the function ranges. There is no PDB, no DWARF, and no third-party debug format involved.
+
+> [!NOTE]
+> The `.mdbg` sidecar is written for `exe` and `dll` builds on the `win64` target.
+
+### 🚀 Debug vs Release Builds
+
+Myrissa has three optimization levels. Debug info is written only at `none`:
+
+| Level | Flag | `.mdbg` written | Optimized |
+|-------|------|-----------------|-----------|
+| `none` | `-opt none` (default) | Yes | No |
+| `basic` | `-opt basic` | No | Mem2Reg, constant folding |
+| `full` | `-opt full` | No | Basic plus dead code elimination |
+
+The default is `none`, so a plain `myr myprogram -r` produces a debuggable binary. Use the conditional compilation symbols `DEBUG` (defined at `none`) and `RELEASE` (defined at `basic` and `full`) to include or exclude code based on the build configuration:
+
+```myr
+@ifdef DEBUG
+  println("debug build -- extra logging enabled");
+@endif
+```
+
+> [!TIP]
+> You do not need to pass `-opt none` explicitly -- it is the default. Only specify an optimization level when you want a release build.
+
+### 🖥️ Launching the Debugger
+
+Use the `-d` flag to build with debug info and immediately launch the integrated debugger:
+
+```
+myr myprogram -d
+```
+
+This compiles the project, attaches the native DAP debugger, and runs the program under debugger control. The debugger will stop at any `@breakpoint;` locations in your source code.
+
+> [!IMPORTANT]
+> The `-d` flag and `-r` (run) flag are mutually exclusive. Use `-d` when you want to debug, and `-r` when you just want to run.
+
+> [!NOTE]
+> The integrated debugger currently requires the `win64` target.
+
+### 🔌 DAP Protocol Support
+
+Myrissa's native debugger implements the Debug Adapter Protocol (DAP), the same protocol used by VS Code, JetBrains, and many other editors for debugger integration. The debugger supports:
+
+- **Breakpoints** -- set via `@breakpoint;` directives or interactively in the editor
+- **Step In / Step Over / Step Out** -- standard stepping through your source code
+- **Variable Inspection** -- view local variables, parameters, and global state
+- **Call Stack** -- see the full call chain at any breakpoint or pause
+
+#### Setting Up VS Code
+
+To debug Myrissa programs in VS Code:
+
+1. Build your program with the `-d` flag: `myr myprogram -d`
+2. The compiler launches the DAP server automatically
+3. VS Code connects to the DAP server and presents the debugging UI
+4. Breakpoints marked with `@breakpoint;` are hit as execution reaches them
+
+### 📋 Complete Example
+
+Here is a complete debuggable program that demonstrates breakpoints in both the main body and a routine:
+
+```myr
+module exe debug_example;
+
+var globalCounter: int32 = 100;
+
+routine add(a: int32; b: int32): int32;
+  var sum: int32;
+begin
+  sum := a + b;
+  @breakpoint;         // pause here to inspect sum, a, b
+  return sum;
+end;
+
+begin
+  var x: int32 = 10;
+  var y: int32 = 20;
+  @breakpoint;           // pause here to inspect x, y before the call
+  var result: int32 = add(x, y);
+  println("result = %d", result);
+end.
+```
+
+Build and debug:
+
+```
+myr debug_example -d
+```
+
+The debugger will stop first at the `@breakpoint` in the main body (before the call to `add`), then at the `@breakpoint` inside `add`, allowing you to inspect variables at each point.
+
+
+
+<a id="code-style"></a>
+
+## 📐 Code Style
+
+Myrissa has simple, consistent conventions for naming, formatting, and file organization. Following these conventions keeps your code readable and consistent with the standard library and examples.
+
+### 🏷️ Naming Conventions
+
+| Category | Style | Example |
+|----------|-------|---------|
+| Types | PascalCase, no prefix | `Point`, `Color`, `HttpClient` |
+| Variables | camelCase | `count`, `totalScore`, `isReady` |
+| Constants | UPPER_CASE with underscores | `MAX_SIZE`, `DEFAULT_PORT`, `PI` |
+| Routines | camelCase or snake_case | `add`, `getLength`, `make_point` |
+| Module names | lowercase | `mathlib`, `netutils`, `sdl3` |
+
+> [!NOTE]
+> 📝 Myrissa does **not** use the `T` prefix on type names. If you are coming from Delphi or Object Pascal, write `Point` instead of `TPoint`, `Color` instead of `TColor`.
+
+### 📄 File Organization
+
+Every Myrissa source file follows this structure:
+
+```myr
+module <kind> <name>;
+
+// imports
+import other_module;
+
+// constants
+const
+  MY_CONST: int32 = 42;
+
+// types
+type
+  MyRecord = record
+    x: int32;
+    y: int32;
+  end;
+
+// forward declarations (if needed)
+forward routine helper(a: int32): int32;
+
+// routines
+routine helper(a: int32): int32;
+begin
+  return a * 2;
+end;
+
+// public API
+public routine doWork(value: int32): int32;
+begin
+  return helper(value) + MY_CONST;
+end;
+
+// initialization (optional)
+initialize
+  println("module loaded");
+end;
+
+// finalization (optional)
+finalize
+  println("module unloaded");
+end;
+
+// main body (exe modules only)
+begin
+  println("Hello, Myrissa!");
+end.
+```
+
+The module declaration is always first, followed by imports, then declarations (constants, types, variables, routines), optional init/final blocks, and the closing `end.` (with a main body for `exe` modules).
+
+### 💬 Comments
+
+Myrissa supports two comment styles:
+
+```myr
+// Line comment -- everything after // to end of line
+
+/* Block comment
+   Can span multiple lines
+   and can be /* nested */ safely */
+```
+
+Use line comments for short annotations. Use block comments for longer explanations or temporarily disabling code. The `(* *)` and `{ }` comment styles from traditional Pascal are **not** supported.
+
+### 🔤 Formatting Guidelines
+
+**Indentation:** Use consistent indentation (two or four spaces). Pick one and stick with it throughout your project.
+
+**Semicolons:** Every statement ends with a semicolon. The `end` that closes a block also takes a semicolon (`end;`), except the final `end.` that closes the module.
+
+**Control structures:** `if`, `while`, `for`, `match`, and `guard` always terminate with `end;`. There are no single-statement forms without `end`:
+
+```myr
+// Correct
+if x > 0 then
+  println("positive");
+end;
+
+// Also correct -- multiple statements
+if x > 0 then
+  println("positive");
+  count += 1;
+end;
+```
+
+**Routine parameters:** Separate parameters with semicolons. Group parameters of the same type when it reads naturally:
+
+```myr
+routine move(x: int32; y: int32; speed: float64): boolean;
+```
+
+**Blank lines:** Use blank lines to separate logical sections: between routines, between groups of related declarations, and before/after init/final blocks.
+
+### 📦 Visibility
+
+Declarations are private by default. Use the `public` keyword to export a declaration from a module:
+
+```myr
+public const API_VERSION: int32 = 1;      // visible to importers
+const INTERNAL_LIMIT: int32 = 256;          // private
+
+public routine calculate(x: int32): int32;  // exported
+routine helper(x: int32): int32;            // private
+```
+
+When consuming imported symbols, always qualify them with the module name:
+
+```myr
+import mathlib;
+var result: int32 = mathlib.add(2, 3);
+```
+
+### ✅ Example: Well-Structured Source File
+
+```myr
+module unit geometry;
+
+// -- Constants --
+
+public const ORIGIN_X: int32 = 0;
+public const ORIGIN_Y: int32 = 0;
+
+// -- Types --
+
+public type
+  Point = record
+    x: int32;
+    y: int32;
+  end;
+
+public type
+  Rect = record
+    left: int32;
+    top: int32;
+    width: int32;
+    height: int32;
+  end;
+
+// -- Public API --
+
+public routine makePoint(px: int32; py: int32): Point;
+var result: Point;
+begin
+  result.x := px;
+  result.y := py;
+  return result;
+end;
+
+public routine area(const r: Rect): int32;
+begin
+  return r.width * r.height;
+end;
+
+public routine contains(const r: Rect; const p: Point): boolean;
+begin
+  return (p.x >= r.left) and (p.x < r.left + r.width)
+     and (p.y >= r.top) and (p.y < r.top + r.height);
+end;
+
+// -- Module lifecycle --
+
+initialize
+  println("geometry loaded");
+end;
+
+end.
+```
+
+> [!TIP]
+> 💡 Keep routines short and focused. If a routine grows beyond a screenful, consider splitting it into smaller helpers. Group related routines together and separate groups with blank lines and a short comment header.
+
+<a id="common-tasks"></a>
+
+## 🛠️ Common Tasks
+
+Practical recipes for everyday Myrissa work. Each recipe is self-contained -- copy, adapt, and build.
+
+### Create a Hello World Program
+
+The simplest Myrissa program:
+
+```myr
+module exe hello;
+begin
+  println("Hello, Myrissa!");
+end.
+```
+
+Build and run:
+
+```
+myr hello -r
+```
+
+### Read Command Line Arguments
+
+Access command line arguments with `paramcount()` and `paramstr()`:
+
+```myr
+module exe args_demo;
+begin
+  println("program: %s", paramstr(0));
+  println("arg count: %d", paramcount());
+
+  var i: int32;
+  for i := 1 to paramcount() do
+    println("  arg[%d] = %s", i, paramstr(i));
+  end;
+end.
+```
+
+> [!TIP]
+> 💡 `paramstr(0)` returns the program name. Arguments start at index 1. `paramcount()` excludes the program name.
+
+### Create and Use a Unit Module
+
+Split code into reusable units. The unit:
+
+```myr
+// mathlib.myr
+module unit mathlib;
+
+public routine add(a: int32; b: int32): int32;
+begin
+  return a + b;
+end;
+
+public routine multiply(a: int32; b: int32): int32;
+begin
+  return a * b;
+end;
+
+initialize
+  println("mathlib loaded");
+end;
+
+end.
+```
+
+The consumer:
+
+```myr
+// main.myr
+module exe main;
+import mathlib;
+begin
+  println("3 + 4 = %d", mathlib.add(3, 4));
+  println("5 * 6 = %d", mathlib.multiply(5, 6));
+end.
+```
+
+> [!IMPORTANT]
+> 🔑 All imported symbols must be module-qualified: `mathlib.add(...)`, not just `add(...)`.
+
+### Create and Use a DLL
+
+Build a shared library and call it from an executable.
+
+The DLL:
+
+```myr
+// mylib.myr
+module dll mylib;
+
+public routine clink double_it(const x: int32): int32;
+begin
+  return x * 2;
+end;
+
+end.
+```
+
+Build it:
+
+```
+myr mylib
+```
+
+The consumer:
+
+```myr
+// app.myr
+module exe app;
+routine clink double_it(const x: int32): int32; external "mylib";
+begin
+  println("%d", double_it(21));   // prints 42
+end.
+```
+
+> [!NOTE]
+> 📝 The consumer declares the same signature with `external "mylib"` instead of a body. Use `clink` for C calling convention so the name is not mangled.
+
+### Call C Library Functions
+
+Use the `external` clause with the `name` alias to call C functions:
+
+```myr
+module exe cffi_demo;
+
+// Alias to avoid colliding with runtime headers
+routine clink myabs(const n: int32): int32; external "c" name "abs";
+routine clink mytoupper(const c: int32): int32; external "c" name "toupper";
+
+begin
+  println("abs(-42) = %d", myabs(-42));
+  println("toupper(97) = %d", mytoupper(97));   // 'a' -> 'A'
+end.
+```
+
+> [!IMPORTANT]
+> 🔑 Don't use stdlib function names directly as Myrissa routine names -- they collide with runtime headers. Always use the `name` clause to alias.
+
+### Handle Errors with guard/except
+
+Use `guard` blocks for exception handling:
+
+```myr
+module exe error_demo;
+
+routine risky_divide(a: int32; b: int32): int32;
+begin
+  if b = 0 then
+    throw("division by zero");
+  end;
+  return a div b;
+end;
+
+begin
+  guard
+    var result: int32 = risky_divide(10, 0);
+    println("result = %d", result);
+  except
+    println("error: code=%lld, msg=%s", exccode(), excmsg());
+  finally
+    println("cleanup complete");
+  end;
+end.
+```
+
+Use `throwcode` for custom error codes:
+
+```myr
+throwcode(42, "custom error with code 42");
+```
+
+> [!TIP]
+> 💡 `guard` catches both software exceptions (`throw`/`throwcode`) and hardware exceptions (division by zero, access violations).
+
+### Work with Records and Pointers
+
+Define a record, create instances on the stack and heap:
+
+```myr
+module exe records_demo;
+
+type
+  Point = record
+    x: int32;
+    y: int32;
+  end;
+
+routine print_point(const p: Point);
+begin
+  println("(%d, %d)", p.x, p.y);
+end;
+
+begin
+  // Stack allocation with record literal
+  var a: Point = Point(x: 10, y: 20);
+  print_point(a);
+
+  // Heap allocation
+  var p: pointer to Point;
+  new(p);
+  p^.x := 30;
+  p^.y := 40;
+  print_point(p^);
+  dispose(p);
+end.
+```
+
+### Use Sets
+
+Sets support membership testing, union, intersection, and difference:
+
+```myr
+module exe sets_demo;
+begin
+  var evens: set = [0, 2, 4, 6, 8, 10];
+  var primes: set = [2, 3, 5, 7];
+
+  // Membership
+  if 5 in primes then
+    println("5 is prime");
+  end;
+
+  // Union
+  var combined: set = evens + primes;
+
+  // Intersection
+  var even_primes: set = evens * primes;   // [2]
+
+  // Difference
+  var odd_primes: set = primes - evens;    // [3, 5, 7]
+
+  // Ranges
+  var digits: set = [0..9];
+end.
+```
+
+### Write and Run Tests
+
+Add test blocks after `end.` with unit test mode enabled:
+
+```myr
+module exe testable;
+@unittestmode on;
 
 routine factorial(n: int32): int32;
 var
-  result: int32;
+  result: int32 = 1;
   i: int32;
 begin
-  result := 1;
-  for i := 2 to n do
-    result := result * i;
+  for i := 1 to n do
+    result *= i;
   end;
   return result;
 end;
 
-begin
-  println("3 + 4 = %d", add(3, 4));
-  greet("Myrissa");
-  println("5! = %d", factorial(5));
 end.
-```
 
-
-### 📨 How Do I Use Var Parameters (Pass by Reference)?
-
-```
-module exe byref;
-
-routine swap(var a: int32; var b: int32);
-var
-  temp: int32;
+test "factorial of 0 is 1"
 begin
-  temp := a;
-  a := b;
-  b := temp;
+  asserteq(1, factorial(0));
 end;
 
-var
-  x: int32 = 10;
-  y: int32 = 20;
-
+test "factorial of 5 is 120"
 begin
-  println("before: x=%d y=%d", x, y);
-  swap(x, y);
-  println("after:  x=%d y=%d", x, y);
-end.
-```
-
-
-### How Do I Use Variadic Arguments?
-
-```
-module exe variadics;
-
-routine print_all(...);
-var
-  i: int32;
-  count: int32;
-begin
-  count := varargs.count;
-  for i := 0 to count - 1 do
-    println("  arg %d: %d", i, varargs.next(int32));
-  end;
+  asserteq(120, factorial(5));
 end;
 
+test "factorial of negative returns 1"
 begin
-  println("Three args:");
-  print_all(10, 20, 30);
-end.
-```
-
-
-### 📋 How Do I Define and Use a Record?
-
-```
-module exe records;
-
-type
-  TPoint = record
-    x: float32;
-    y: float32;
-  end;
-
-routine print_point(p: TPoint);
-begin
-  println("(%f, %f)", p.x, p.y);
+  asserteq(1, factorial(-1));
 end;
-
-var
-  p: TPoint;
-begin
-  p.x := 10.5;
-  p.y := 20.3;
-  print_point(p);
-end.
 ```
 
-
-### 🧬 How Do I Use Record Inheritance?
-
-```
-module exe rec_inherit;
-
-type
-  TShape = record
-    x: int32;
-    y: int32;
-  end;
-
-  TCircle = record(TShape)
-    radius: float32;
-  end;
-
-var
-  c: TCircle;
-begin
-  c.x := 100;
-  c.y := 200;
-  c.radius := 50.0;
-  println("Circle at (%d, %d) radius %f", c.x, c.y, c.radius);
-end.
-```
-
-
-### 📦 How Do I Use Packed Records and Bit Fields?
-
-Packed records have no padding between fields. Bit fields let you pack multiple values into a single byte:
+Build and run tests:
 
 ```
-module exe packed;
-
-type
-  TFlags = record packed
-    visible: uint8 : 1;
-    enabled: uint8 : 1;
-    priority: uint8 : 3;
-    reserved: uint8 : 3;
-  end;
-
-  THeader = record packed
-    magic: uint16;
-    version: uint8;
-    flags: uint8;
-  end;
-
-begin
-  println("TFlags size: %d", size(TFlags));     // 1 byte
-  println("THeader size: %d", size(THeader));   // 4 bytes
-end.
+myr testable -r
 ```
 
+> [!NOTE]
+> 📝 When `@unittestmode on;` is active, the test runner replaces the normal entry point. All assertions are non-aborting -- failures accumulate and are reported at the end.
 
-### 📚 How Do I Use Arrays?
+### Build for Another Platform
 
-```
-module exe arrays;
-
-var
-  numbers: array[5] of int32;
-  i: int32;
-
-begin
-  for i := 0 to 4 do
-    numbers[i] := i * i;
-  end;
-
-  for i := 0 to 4 do
-    println("numbers[%d] = %d", i, numbers[i]);
-  end;
-end.
-```
-
-
-### 🎛️ How Do I Use Choices (Enumerations)?
+Build a Linux binary from Windows with the `-t` flag. The compiler writes the ELF image itself; there is no cross-toolchain to install:
 
 ```
-module exe choices;
-
-type
-  TColor = choices(Red = 0, Green = 1, Blue = 2);
-
-var
-  c: TColor;
-
-begin
-  c := TColor.Green;
-  println("color value: %d", int32(c));
-
-  match int32(c) of
-    0: println("red");
-    1: println("green");
-    2: println("blue");
-  end;
-end.
+myr myapp -t linux64
 ```
 
+Use conditional compilation for platform-specific code:
 
-### 🧮 How Do I Use Sets?
-
-```
-module exe sets;
-
-var
-  s: set;
-
-begin
-  s := [1, 3, 5, 7, 9];
-
-  if 3 in s then
-    println("3 is in the set");
-  end;
-
-  if not (4 in s) then
-    println("4 is not in the set");
-  end;
-end.
-```
-
-
-### 🧊 How Do I Use Overlays (Unions)?
-
-```
-module exe overlays;
-
-type
-  TValue = overlay
-    i: int32;
-    f: float32;
-  end;
-
-var
-  v: TValue;
-
-begin
-  v.i := 42;
-  println("as int: %d", v.i);
-  println("size: %d bytes", size(TValue));   // 4 (max of all fields)
-end.
-```
-
-
-### 🏛️ How Do I Use Objects?
-
-Objects are heap-allocated and used through typed pointers. The `.` operator auto-dereferences object pointers:
-
-```
-module exe objects;
-
-type
-  TCounter = object
-    value: int32;
-
-    method increment();
-    begin
-      self.value := self.value + 1;
-    end;
-
-    method get_value(): int32;
-    begin
-      return self.value;
-    end;
-  end;
-
-var
-  c: pointer to TCounter;
-
-begin
-  create(c);
-  c.value := 0;
-  c.increment();
-  c.increment();
-  c.increment();
-  println("count: %d", c.get_value());   // count: 3
-  destroy(c);
-end.
-```
-
-
-### 🧬 How Do I Use Object Inheritance?
-
-```
-module exe obj_inherit;
-
-type
-  TBase = object
-    x: int32;
-
-    method describe(): int32;
-    begin
-      return self.x * 10;
-    end;
-  end;
-
-  TDerived = object(TBase)
-    y: int32;
-
-    method describe(): int32;
-    begin
-      return parent.describe() + self.y;
-    end;
-  end;
-
-var
-  d: pointer to TDerived;
-
-begin
-  create(d);
-  d.x := 7;
-  d.y := 3;
-  println("describe: %d", d.describe());   // 73 (7*10 + 3)
-  destroy(d);
-end.
-```
-
-
-### 📍 How Do I Use Pointers?
-
-```
-module exe pointers;
-
-type
-  PInt32 = pointer to int32;
-
-var
-  x: int32 = 42;
-  p: PInt32;
-
-begin
-  p := address of x;
-  println("value: %d", p^);    // 42
-  p^ := 100;
-  println("x is now: %d", x);  // 100
-end.
-```
-
-
-### 🧠 How Do I Allocate and Free Memory?
-
-Use `create` and `destroy` for typed object or record-pointer allocations:
-
-```
-module exe memory;
-
-type
-  TData = record
-    value: int32;
-  end;
-
-var
-  p: pointer to TData;
-
-begin
-  create(p);
-  p^.value := 99;
-  println("value: %d", p^.value);
-  destroy(p);
-  println("freed");
-end.
-```
-
-
-### 🪟 How Do I Call a Windows API Function?
-
-Declare external functions with their DLL name:
-
-```
-module exe external;
-
-routine GetTickCount64(): int64;
-  external "kernel32.dll";
-
-routine GetCurrentProcessId(): int32;
-  external "kernel32.dll";
-
-routine Sleep(ms: int32);
-  external "kernel32.dll";
-
-var
-  t: int64;
-  pid: int32;
-
-begin
-  t := GetTickCount64();
-  println("tick: %lld", t);
-
-  pid := GetCurrentProcessId();
-  println("pid: %d", pid);
-
-  Sleep(0);
-  println("done");
-end.
-```
-
-
-### 🎮 How Do I Use a C Library (Vendor Bindings)?
-
-Vendor libraries ship as pre-generated Myrissa bindings. Each library lives under `res/libs/vendor/<lib>/` with this layout:
-
-```text
-res/libs/vendor/raylib/
-  RayLib.myr        <- generated binding module
-  RayLib.json       <- importer config used to generate it
-  include/          <- original C headers
-  win64/            <- raylib.dll
-  linux64/          <- libraylib.so.550
-```
-
-The generated binding module handles cross-platform DLL deployment itself. Its header selects the right shared library per target:
-
-```
-module unit RayLib;
+```myr
+module exe platform_demo;
 
 @ifdef TARGET_WIN64
-  @copydll "$P:res/libs/vendor/raylib/win64/raylib.dll";
-@elseif TARGET_LINUX64
-  @copydll "$P:res/libs/vendor/raylib/linux64/libraylib.so.550";
-@else
-  @message error "RayLib: unsupported target";
+routine clink GetTick(): uint64; external "kernel32" name "GetTickCount64";
 @endif
 
-public const
-  DLL_NAME: string = "raylib";
-```
-
-Every routine in the binding is declared as `external DLL_NAME;` -- one string constant names the library for the whole module.
-
-**Consumer pattern** -- your program only needs the library paths and an import:
-
-```
-module exe demo_raylib;
-
-@libpath "$P:res/libs/vendor/raylib";
-@libpath "$P:res/libs/vendor/raylib/linux64";
-
-import
-  RayLib;
-
 begin
-  RayLib.InitWindow(800, 450, "Myrissa - Raylib Test");
-  RayLib.SetTargetFPS(60);
-
-  while not RayLib.WindowShouldClose() do
-    RayLib.BeginDrawing();
-      RayLib.ClearBackground(RayLib.RAYWHITE);
-      RayLib.DrawText("Hello from Myrissa!", 280, 200, 20, RayLib.DARKGREEN);
-    RayLib.EndDrawing();
-  end;
-
-  RayLib.CloseWindow();
+  @ifdef TARGET_WIN64
+    println("Windows tick: %llu", GetTick());
+  @elseif TARGET_LINUX64
+    println("Running on Linux");
+  @endif
 end.
 ```
 
-How it works per target:
+> [!TIP]
+> 💡 Use `-r` with `-t` to build and run in one step: `myr myapp -r -t linux64`. On Windows the Linux binary is launched through WSL.
 
-- **win64** -- the extensionless name `raylib` resolves to `raylib.dll`; `@copydll` places it next to the output executable.
-- **linux64** -- the library search paths (the second `@libpath`) are probed for `libraylib.so.550` / `libraylib.so` / `raylib.so`; the found filename becomes the executable's needed-library entry, and it loads from the executable's own directory at runtime -- the same file `@copydll` placed there.
+### Use Conditional Compilation
 
-One binding, one consumer module, both targets. Bindings are generated from C headers by the CImporter (dynamic binding only) -- see the API Reference for generating your own.
+Guard code blocks with `@ifdef`, `@ifndef`, `@else`, `@elseif`, and `@endif`:
 
-
-### 🧩 How Do I Build a DLL?
-
-Write a module with `dll` kind and `public` exports:
-
-```
-module dll mylib;
-
-public routine calculate(x: int32; y: int32): int32;
-begin
-  return x * x + y * y;
-end;
-
-end.
-```
-
-Compile:
-
-```
-myrc -s mylib.myr
-```
-
-
-### 🛡️ How Do I Handle Exceptions?
-
-```
-module exe exceptions;
-
-begin
-  /* guard/finally without exception */
-  guard
-    println("in guard");
-  finally
-    println("finally always runs");
-  end;
-
-  /* guard/except with throw */
-  guard
-    println("before throw");
-    throw 42;
-    println("this never runs");
-  except
-    println("caught exception");
-  end;
-
-  println("continues normally");
-end.
-```
-
-
-### 🐞 How Do I Use the Debugger?
-
-Add breakpoints in your source with the `@breakpoint` directive:
-
-```
-module exe debug_example;
-
-var
-  x: int32 = 42;
-
-begin
-  x := x + 1;
-  @breakpoint;
-  println("x = %d", x);   // execution pauses here so you can inspect x
-end.
-```
-
-Run with the debugger:
-
-```
-myrc -s debug_example.myr -d
-```
-
-The debugger supports the Debug Adapter Protocol (DAP), so VS Code and other DAP-capable editors can provide a graphical debugging experience.
-
-
-### 🔀 How Do I Use Conditional Compilation?
-
-```
-module exe conditional;
-
+```myr
+// Define your own symbols
 @define VERBOSE
 
+@ifdef VERBOSE
+  println("debug: entering main loop");
+@endif
+
+// Check multiple conditions
+@ifdef TARGET_WIN64
+  // Windows-specific code
+@elseif TARGET_LINUX64
+  // Linux-specific code
+@else
+  @message error "Unsupported platform";
+@endif
+
+// Undefine a symbol
+@undef VERBOSE
+```
+
+Predefined symbols include `MYRISSA`, `WINDOWS`, `LINUX`, `DEBUG`, `RELEASE`, `BUILD_EXE`, `BUILD_DLL`, and `BUILD_LIB`.
+
+### Use Overloaded Routines
+
+Overloaded routines require `cpplink` linkage:
+
+```myr
+module exe overload_demo;
+
+routine cpplink describe(const x: int32);
 begin
-  @ifdef VERBOSE
-    println("verbose mode is on");
-  @endif
+  println("integer: %d", x);
+end;
 
-  @ifndef RELEASE
-    println("not a release build");
-  @endif
+routine cpplink describe(const x: float64);
+begin
+  println("float: %f", x);
+end;
 
-  @ifdef BUILD_EXE
-    println("building an EXE");
-  @endif
+routine cpplink describe(const x: string);
+begin
+  println("string: %s", cstr(x));
+end;
+
+begin
+  describe(42);
+  describe(3.14);
+  describe("hello");
 end.
 ```
 
+> [!NOTE]
+> 📝 `cpplink` enables C++ name mangling, which the linker needs to distinguish overloaded signatures. If you forget it, the compiler auto-promotes with a warning.
 
-### ☎️ How Do I Use Routine Types (Function Pointers)?
+### Use Dynamic Arrays
 
-```
-module exe routine_types;
+Allocate, resize, and iterate dynamic arrays:
 
-type
-  TCompare = routine(a: int32; b: int32): int32;
-
-routine ascending(a: int32; b: int32): int32;
+```myr
+module exe dynarray_demo;
 begin
-  return a - b;
-end;
+  var nums: array of int32;
+  setlength(nums, 5);
 
-routine descending(a: int32; b: int32): int32;
-begin
-  return b - a;
-end;
+  var i: int32;
+  for i := 0 to len(nums) - 1 do
+    nums[i] := i * i;
+  end;
 
-routine apply(cmp: TCompare; x: int32; y: int32): int32;
-begin
-  return cmp(x, y);
-end;
-
-begin
-  println("asc: %d", apply(ascending, 3, 7));
-  println("desc: %d", apply(descending, 3, 7));
-end.
-```
-
-
-### 🔁 How Do I Use Type Casting?
-
-```
-module exe typecast;
-
-var
-  i: int32 = 65;
-  f: float64 = 3.14;
-
-begin
-  println("int as float: %f", float64(i));
-  println("float as int: %d", int32(f));
-end.
-```
-
-
-### ✍️ How Do I Use Compound Assignment?
-
-```
-module exe compound;
-
-var
-  x: int32 = 10;
-
-begin
-  x += 5;     // x = 15
-  x -= 3;     // x = 12
-  x *= 2;     // x = 24
-  x /= 4;     // x = 6
-  println("x = %d", x);
-end.
-```
-
-
-### 🚪 How Do I Use Initialize and Finalize?
-
-Module lifecycle hooks run at startup and shutdown:
-
-```
-module exe lifecycle;
-
-initialize
-  println("startup");
-end;
-
-finalize
-  println("shutdown");
-end;
-
-begin
-  println("main");
-end.
-```
-
-Output:
-
-```
-startup
-main
-shutdown
-```
-
-
-### 🧪 How Do I Write Unit Tests?
-
-```
-module exe tests;
-
-@unittestmode on;
-
-routine add(a: int32; b: int32): int32;
-begin
-  return a + b;
-end;
-
-routine is_even(n: int32): boolean;
-begin
-  return (n mod 2) = 0;
-end;
-
-end.
-
-test "addition"
-begin
-  asserteq(5, add(2, 3));
-  asserteq(0, add(-1, 1));
-  asserteq(0, add(0, 0));
-end;
-
-test "even check"
-begin
-  asserttrue(is_even(0));
-  asserttrue(is_even(42));
-  assertfalse(is_even(7));
-end;
-
-test "comparisons"
-begin
-  asserttrue(10 > 5);
-  asserttrue(5 <= 5);
-  asserttrue(42 = 42);
-  asserttrue(42 <> 99);
-end;
-
-test "nil pointer"
-var
-  p: pointer;
-begin
-  p := nil;
-  assertnil(p);
-end;
-```
-
-When `@unittestmode on;` is active, the compiler replaces the normal entry point with the test runner. Assertions accumulate failures and report results per test instead of aborting at the first failure.
-
-
-### ⌨️ How Do I Read Command-Line Arguments?
-
-```
-module exe cmdargs;
-
-var
-  i: int32;
-  count: int32;
-
-begin
-  count := paramcount();
-  println("argument count: %d", count);
-  for i := 0 to count - 1 do
-    println("arg[%d] = %s", i, paramstr(i));
+  for i := 0 to len(nums) - 1 do
+    println("nums[%d] = %d", i, nums[i]);
   end;
 end.
 ```
 
 
-### 📏 How Do I Use the Size and Len Intrinsics?
-
-```
-module exe intrinsics;
-
-type
-  TPoint = record
-    x: float32;
-    y: float32;
-  end;
-
-var
-  s: string = "Hello";
-
-begin
-  println("int32 size: %d", size(int32));      // 4
-  println("TPoint size: %d", size(TPoint));    // 8
-  println("string length: %d", len(s));        // 5
-end.
-```
-
-### 🧯 How Do I Debug a Compile Error?
-
-Start with the first reported diagnostic. Later errors are often follow-up noise caused by the first failure.
-
-```text
-1. Read the first error message
-2. Check the exact source location
-3. Verify the surrounding declaration or statement
-4. Rebuild after fixing one issue
-5. Repeat until diagnostics are clean
-```
-
-Common causes:
-
-| Error Pattern | Likely Fix |
-|---------------|------------|
-| 🔤 Unknown identifier | Check spelling, case, imports, and module qualification |
-| 🧱 Type mismatch | Confirm the declared type and expression result type |
-| 📥 Import failure | Check unit filename, `module unit` name, and `@libpath` |
-| 🔧 Routine call failure | Check parameter count, order, and parameter mode |
-| 📍 Pointer issue | Check address/dereference usage and target type |
-
-### 🧪 How Do I Build Confidence in a New Feature?
-
-Use tiny programs before wiring the feature into a larger app:
-
-```text
-feature_sandbox/
-  test_basic.myr
-  test_errors.myr
-  test_edge_cases.myr
-```
-
-Recommended flow:
-
-- ✅ Write the smallest working example
-- 🧯 Add one intentional failure and confirm the diagnostic makes sense
-- 📈 Add edge cases only after the happy path works
-- 🧪 Turn the final examples into unit tests when possible
-- 📚 Move reusable code into a `module unit` only after the API feels stable
-
-### 📌 Recipe Style Notes
-
-- 🧱 Examples favor clarity over cleverness
-- 📦 Declarations are shown near the code that uses them
-- 🔤 Names are simple so the syntax stands out
-- 🧪 Test examples use `asserteq(expected, actual)`
-- 🧠 Memory and pointer examples are intentionally explicit
-
-
-
----
 
 <a id="contributing"></a>
 
@@ -5867,7 +4293,7 @@ Apache 2.0 is a permissive open source license that lets you use, modify, and di
 
 ## 🔗 Links
 
-- 🌐 [myrissa.org](https://myrissa.org)
+- 🌐 [Homepage](https://myrissa.org/)
 - 🧑‍💻 [GitHub](https://github.com/tinyBigGAMES/Myrissa)
 - 💬 [Discord](https://discord.gg/Wb6z8Wam7p)
 - 🦋 [Bluesky](https://bsky.app/profile/tinybiggames.com)
@@ -5875,8 +4301,8 @@ Apache 2.0 is a permissive open source license that lets you use, modify, and di
 
 <div align="center">
 
-**💎 Myrissa Programming Language&trade;**
+**💎 Myrissa&trade;** - Pascal elegance. C power. Zero dependencies.
 
-Copyright &copy; 2025-present tinyBigGAMES&trade; LLC<br/>All Rights Reserved.
+Copyright &copy; 2026-present tinyBigGAMES&trade; LLC<br/>All Rights Reserved.
 
 </div>

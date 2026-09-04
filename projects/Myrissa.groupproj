@@ -1,0 +1,60 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{8F10E0C3-7E85-4F86-9E25-01B823367AF7}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="myrlsp\myrlsp.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="myrtester\myrtester.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="myr\myr.dproj">
+            <Dependencies>myrtester\myrtester.dproj;myrlsp\myrlsp.dproj</Dependencies>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="myrlsp">
+        <MSBuild Projects="myrlsp\myrlsp.dproj"/>
+    </Target>
+    <Target Name="myrlsp:Clean">
+        <MSBuild Projects="myrlsp\myrlsp.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="myrlsp:Make">
+        <MSBuild Projects="myrlsp\myrlsp.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="myrtester">
+        <MSBuild Projects="myrtester\myrtester.dproj"/>
+    </Target>
+    <Target Name="myrtester:Clean">
+        <MSBuild Projects="myrtester\myrtester.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="myrtester:Make">
+        <MSBuild Projects="myrtester\myrtester.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="myr" DependsOnTargets="myrtester;myrlsp">
+        <MSBuild Projects="myr\myr.dproj"/>
+    </Target>
+    <Target Name="myr:Clean" DependsOnTargets="myrtester:Clean;myrlsp:Clean">
+        <MSBuild Projects="myr\myr.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="myr:Make" DependsOnTargets="myrtester:Make;myrlsp:Make">
+        <MSBuild Projects="myr\myr.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="myrlsp;myrtester;myr"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="myrlsp:Clean;myrtester:Clean;myr:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="myrlsp:Make;myrtester:Make;myr:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>
