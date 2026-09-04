@@ -1,0 +1,25 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_link_lib_path.myr
+
+  Minimal static lib found only via @addlibrarypath search.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module lib bnf_link_lib_path;
+
+public routine clink libpath_answer(): int32;
+begin
+  return 42;
+end;
+
+end.

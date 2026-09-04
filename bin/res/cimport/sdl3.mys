@@ -1,0 +1,33 @@
+/*******************************************************************************
+  CPaskal™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://cpaskal.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  sdl3.cps
+
+  CImport script for SDL3 - Simple DirectMedia Layer 3. Generates CPaskal
+  bindings from the SDL3 C headers.
+*******************************************************************************/
+
+module script sdl3;
+
+begin
+  SetSavePreprocessed(false);
+  SetBindingMode("dynamic");
+  SetModuleName("SDL3");
+  SetDllName("SDL3");
+  SetOutputPath("res/libs/vendor/sdl3");
+  SetDllPath("res/libs/vendor/sdl3/win64/SDL3.dll");
+  AddIncludePath("res/libs/vendor/sdl3/include", "");
+  AddSourcePath("res/libs/vendor/sdl3/include");
+  AddDefine("SDL_DISABLE_OLD_NAMES", "1");
+  AddExcludedType("va_list");
+  SetHeader("res/libs/vendor/sdl3/include/SDL3/sdl.h");
+  AddCopyDll("win64", "$P:res/libs/vendor/sdl3/win64/SDL3.dll");
+  Process();
+end.

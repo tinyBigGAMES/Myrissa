@@ -1,0 +1,29 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_link_lib_dllvar.myr
+
+  Static lib that reads a DLL-exported global variable.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module lib bnf_link_lib_dllvar;
+
+@addlibrarypath "$P:output";
+
+var dll_global_x: int32; external "bnf_dll_compliance";
+
+public routine clink libv_read(): int32;
+begin
+  return dll_global_x;
+end;
+
+end.

@@ -1,0 +1,157 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  test_exe_dll_compliance.myr
+
+  Companion test exe for bnf_dll_compliance.myr. Links against the DLL and
+  exercises every public symbol to verify DLL exports, initialization, and
+  cross-module access.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module exe test_exe_dll_compliance;
+
+// Local type definitions (matching DLL types)
+public type
+  DllColor = choices(dcRed, dcGreen, dcBlue);
+
+public type
+  DllPoint = record
+    x: int32;
+    y: int32;
+  end;
+
+// Import DLL routines via external clause
+routine clink dll_add(const a: int32; const b: int32): int32; external "bnf_dll_compliance";
+routine clink dll_mul(const a: int32; const b: int32): int32; external "bnf_dll_compliance";
+routine clink dll_negate(const x: int32): int32; external "bnf_dll_compliance";
+routine clink dll_quadruple(const x: int32): int32; external "bnf_dll_compliance";
+routine clink dll_factorial(const n: int32): int32; external "bnf_dll_compliance";
+routine clink dll_is_positive(const x: int32): boolean; external "bnf_dll_compliance";
+routine clink dll_set_global(const x: int32); external "bnf_dll_compliance";
+routine clink dll_get_global(): int32; external "bnf_dll_compliance";
+routine clink dll_make_point(const ax: int32; const ay: int32): DllPoint; external "bnf_dll_compliance";
+
+// Import DLL variables
+var dll_init_count: int32; external "bnf_dll_compliance";
+var dll_global_x: int32; external "bnf_dll_compliance";
+
+var
+  passed: int32;
+  total: int32;
+
+initialize
+  println("exe init");
+end;
+
+finalize
+  println("exe final");
+end;
+
+begin
+  println("=== Test DLL Compliance ===");
+  passed := 0;
+  total := 0;
+
+  // --- Arithmetic routines ---
+  println("\n--- Routines ---");
+
+  total := total + 1;
+  if dll_add(3, 4) = 7 then
+    passed := passed + 1;
+    println("dll_add(3, 4) = %d", dll_add(3, 4));
+  end;
+
+  total := total + 1;
+  if dll_mul(6, 7) = 42 then
+    passed := passed + 1;
+    println("dll_mul(6, 7) = %d", dll_mul(6, 7));
+  end;
+
+  total := total + 1;
+  if dll_negate(42) = -42 then
+    passed := passed + 1;
+    println("dll_negate(42) = %d", dll_negate(42));
+  end;
+
+  total := total + 1;
+  if dll_quadruple(4) = 16 then
+    passed := passed + 1;
+    println("dll_quadruple(4) = %d", dll_quadruple(4));
+  end;
+
+  total := total + 1;
+  if dll_factorial(5) = 120 then
+    passed := passed + 1;
+    println("dll_factorial(5) = %d", dll_factorial(5));
+  end;
+
+  total := total + 1;
+  if dll_is_positive(1) = true then
+    passed := passed + 1;
+    println("dll_is_positive(1) = %d", dll_is_positive(1));
+  end;
+
+  total := total + 1;
+  if dll_is_positive(-1) = false then
+    passed := passed + 1;
+    println("dll_is_positive(-1) = %d", dll_is_positive(-1));
+  end;
+
+  // --- Variables ---
+  println("\n--- Variables ---");
+
+  total := total + 1;
+  if dll_init_count = 1 then
+    passed := passed + 1;
+    println("dll_init_count = %d", dll_init_count);
+  end;
+
+  total := total + 1;
+  if dll_global_x = 42 then
+    passed := passed + 1;
+    println("dll_global_x = %d", dll_global_x);
+  end;
+
+  // --- Global state via routines ---
+  println("\n--- Global State ---");
+
+  dll_set_global(99);
+  total := total + 1;
+  if dll_get_global() = 99 then
+    passed := passed + 1;
+    println("after set_global(99): get_global() = %d", dll_get_global());
+  end;
+
+  // --- Record return ---
+  println("\n--- Record Return ---");
+
+  var p: DllPoint;
+  p := dll_make_point(10, 20);
+  total := total + 1;
+  if p.x = 10 then
+    passed := passed + 1;
+  end;
+  total := total + 1;
+  if p.y = 20 then
+    passed := passed + 1;
+  end;
+  println("dll_make_point(10, 20) = (%d, %d)", p.x, p.y);
+
+  // --- Summary ---
+  println("\ndll compliance: %d / %d passed", passed, total);
+  if passed = total then
+    println("=== All DLL compliance tests passed ===");
+  else
+    println("=== SOME DLL TESTS FAILED ===");
+  end;
+  asserteq(passed, total, "dll compliance");
+end.

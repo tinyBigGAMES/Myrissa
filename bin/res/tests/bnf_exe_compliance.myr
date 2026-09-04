@@ -1,0 +1,1258 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_exe_compliance.myr
+
+  BNF compliance test for the 'exe' module kind. Exercises constants,
+  variables, strings, control flow, routines, choices, pointers, records,
+  routine types, intrinsics, memory management, arrays, dynamic arrays,
+  exceptions, type casts, record literals, overloading, conditional
+  compilation, external clauses, sets, and new/dispose.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module exe bnf_compliance;
+
+//@target x86_64_linux;
+//@target x86_64_windows;
+
+// Phase 23: Module features -- import
+import bnf_unit_compliance;
+
+const
+  // Integer constants (typed and untyped)
+  MAX: int32 = 100;
+  ANSWER: int32 = 42;
+  UNTYPED = 99;
+
+  // Float constant
+  PI: float64 = 3.14159;
+
+  // Boolean constants
+  YES: boolean = true;
+  NO: boolean = false;
+
+  // Expression constants -- arithmetic
+  DOUBLED = 21 * 2;
+  SUM = 10 + 20;
+  DIFF = 50 - 8;
+  QUOTIENT = 100 div 3;
+  REMAINDER = 100 mod 7;
+
+  // Expression constants -- grouped
+  GROUPED = (5 + 3) * 2;
+
+  // Expression constants -- unary
+  NEGATIVE = -42;
+
+  // Expression constants -- logical/bitwise
+  ANDED = 15 and 9;
+  ORED = 10 or 5;
+  XORED = 12 xor 10;
+  SHIFTED_L = 1 shl 4;
+  SHIFTED_R = 256 shr 2;
+
+  // Expression constants -- comparison (result is boolean)
+  IS_EQUAL = 5 = 5;
+  NOT_EQUAL = 3 <> 4;
+  IS_LESS = 2 < 10;
+  IS_GREATER = 10 > 2;
+  IS_LTE = 5 <= 5;
+  IS_GTE = 10 >= 3;
+
+  // Expression constants -- boolean logic
+  BOTH = true and true;
+  EITHER = false or true;
+  NEGATED = not false;
+
+  // Const referencing another const
+  COPY = ANSWER;
+
+var
+  x: int32 = 10;
+  y: int32;
+  pi: float64 = 3.14;
+
+  // All integer types
+  v_i8:    int8    = 8;
+  v_i16:   int16   = 16;
+  v_i64:   int64   = 64;
+  v_u8:    uint8   = 200;
+  v_u16:   uint16  = 60000;
+  v_u32:   uint32  = 100000;
+  v_u64:   uint64  = 999999;
+
+  // Float32
+  v_f32:   float32 = 3.14;
+
+  // Boolean
+  v_bool:  boolean = true;
+
+  // Character types
+  v_char:  char    = "A";
+  v_wchar: wchar   = w"Ω";
+
+  // String
+  v_str:   string  = "hello";
+
+// Phase 5 routines
+routine add_nums(a: int32; b: int32): int32;
+begin
+  return a + b;
+end;
+
+routine mul_nums(a: int32; b: int32): int32;
+begin
+  return a * b;
+end;
+
+// Returns zero through a global write so the optimizer cannot constant-fold it
+var g_opaque: int32 = 0;
+
+routine get_zero(): int32;
+begin
+  g_opaque := g_opaque + 1;
+  g_opaque := g_opaque - 1;
+  return g_opaque;
+end;
+
+routine throw_helper();
+begin
+  throw("propagated error");
+end;
+
+routine factorial(n: int32): int32;
+var result: int32 = 1;
+    i: int32 = 0;
+begin
+  for i := 1 to n do
+    result *= i;
+  end;
+  return result;
+end;
+
+// Phase 3b helpers: string-returning routines (temporaries)
+routine greet(const who: string): string;
+begin
+  return "hello " + who;
+end;
+
+routine exclaim(const s: string): string;
+var t: string;
+begin
+  t := s + "!";
+  return t;
+end;
+
+// Phase 6: Type Section -- Choices (Enums)
+type
+  Color = choices(red, green, blue = 5, alpha);
+  Dir = choices(north, east, south, west);
+
+  // Phase 16: Records (struct types)
+  Point = record
+    x: int32;
+    y: int32;
+  end;
+
+  // Phase 16b: Extended records
+  PackedPair = record packed
+    a: int8;
+    b: int32;
+  end;
+
+  Aligned32 = record align(32)
+    val: int32;
+  end;
+
+  Base = record
+    bx: int32;
+    by: int32;
+  end;
+
+  Derived = record(Base)
+    dz: int32;
+  end;
+
+  Inner = record
+    iv: int32;
+  end;
+
+  Outer = record
+    inner: Inner;
+    ov: int32;
+  end;
+
+  // Standalone overlay (union)
+  Value = overlay
+    asInt: int64;
+    asFloat: float64;
+  end;
+
+  // Anon overlay inside record
+  Tagged = record
+    tag: int32;
+    overlay
+      iVal: int64;
+      fVal: float64;
+    end;
+  end;
+
+  // Bit fields
+  BitPack = record
+    a: uint32 : 4;
+    b: uint32 : 4;
+    c: uint32 : 8;
+  end;
+
+  // Phase 17: Routine types (function pointers)
+  BinOp = routine(x: int32; y: int32): int32;
+
+  MathOps = record
+    addFn: BinOp;
+    mulFn: BinOp;
+  end;
+
+  // Phase 26: Record literal types
+  Person = record
+    name: string;
+    age: int32;
+  end;
+
+  Line = record
+    start: Point;
+    finish: Point;
+  end;
+
+var fp_op: BinOp;
+var math_ops: MathOps;
+var mbuf: pointer to uint8;
+var arr5: array[0..4] of int32;
+var darr: array of int32;
+
+// Phase 27: Routine overloading
+routine ovl_add(a: int32; b: int32): int32;
+begin
+  return a + b;
+end;
+
+routine ovl_add(a: float64; b: float64): float64;
+begin
+  return a + b;
+end;
+
+routine ovl_add(a: int32; b: int32; c: int32): int32;
+begin
+  return a + b + c;
+end;
+
+// Phase 29: External clause declarations (FFI binding)
+@ifdef TARGET_WIN64
+const EXT_LIB_C = "msvcrt.dll";
+const EXT_WIN_LIB = "kernel32";
+routine clink myabs(const n: int32): int32; external "msvcrt.dll" name "abs";
+routine clink mytoupper(const c: int32): int32; external EXT_LIB_C name "toupper";
+routine clink myabs2(const n: int32): int32; external "msvcrt.dll" name "abs";
+routine clink GetTick(): uint64; external "kernel32" name "GetTickCount64";
+routine clink GetTick2(): uint64; external EXT_WIN_LIB name "GetTickCount64";
+@endif
+@ifdef TARGET_LINUX64
+const EXT_LIB_C = "libc.so.6";
+routine clink myabs(const n: int32): int32; external "libc.so.6" name "abs";
+routine clink mytoupper(const c: int32): int32; external EXT_LIB_C name "toupper";
+routine clink myabs2(const n: int32): int32; external "libc.so.6" name "abs";
+routine clink ext_getpid(): int32; external "libc.so.6" name "getpid";
+@endif
+
+
+// Phase 23: Module features -- initialize/finalize
+initialize
+  println("=== Phase 23a: Initialize block ===");
+end;
+
+finalize
+  println("=== Phase 23c: Finalize block ===");
+end;
+
+begin
+  println("Myrissa BNF Compliance");
+
+  // Phase 23b: Actually use imported symbols (full module qualification)
+  println("\n=== Phase 23b: Import Usage ===");
+  println("bnf_unit_compliance.UNIT_VERSION = %d", bnf_unit_compliance.UNIT_VERSION);
+  println("bnf_unit_compliance.unit_add(3, 4) = %d", bnf_unit_compliance.unit_add(3, 4));
+
+  println("\n=== Phase 1: Constants ===");
+
+  // Integer constants
+  println("%d", MAX);
+  println("%d", ANSWER);
+  println("%d", UNTYPED);
+
+  // Float constant
+  println("%g", PI);
+  asserteqf(PI, 3.14159, 0.00001);
+
+  // Boolean constants
+  println("%d", YES);
+  println("%d", NO);
+
+  // Arithmetic expression constants
+  println("%d", DOUBLED);
+  println("%d", SUM);
+  println("%d", DIFF);
+  println("%d", QUOTIENT);
+  println("%d", REMAINDER);
+
+  // Grouped expression constant
+  println("%d", GROUPED);
+
+  // Unary expression constant
+  println("%d", NEGATIVE);
+
+  // Logical/bitwise constants
+  println("%d", ANDED);
+  println("%d", ORED);
+  println("%d", SHIFTED_L);
+  println("%d", SHIFTED_R);
+
+  // Comparison constants
+  println("%d", IS_EQUAL);
+  println("%d", NOT_EQUAL);
+  println("%d", IS_LESS);
+  println("%d", IS_GREATER);
+  println("%d", IS_LTE);
+  println("%d", IS_GTE);
+
+  // Boolean logic constants
+  println("%d", BOTH);
+  println("%d", EITHER);
+  println("%d", NEGATED);
+
+  // Const referencing const
+  println("%d", COPY);
+
+  // Phase 2: Variables
+  println("\n=== Phase 2: Variables ===");
+
+  // Typed var with initializer
+  println("%d", x);
+
+  // Typed var without initializer, assigned later
+  y := x + 5;
+  println("%d", y);
+
+  // Reassignment
+  x := 42;
+  println("%d", x);
+
+  // Float var
+  println("%g", pi);
+  asserteqf(pi, 3.14, 0.0001);
+
+  // Phase 2b: All variable types
+  println("\n=== Phase 2b: All Variable Types ===");
+
+  // Signed integers
+  println("%d", v_i8);
+  println("%d", v_i16);
+  println("%lld", v_i64);
+
+  // Unsigned integers
+  println("%u", v_u8);
+  println("%u", v_u16);
+  println("%u", v_u32);
+  println("%llu", v_u64);
+
+  // Float32
+  println("%g", v_f32);
+  asserteqf(v_f32, 3.14, 0.0001);
+
+  // Boolean
+  println("%d", v_bool);
+
+  // Character types
+  println("%c", v_char);
+  println("%d", v_wchar);
+
+  // Assignment with type cast
+  v_i8 := 127;
+  v_u8 := 255;
+  v_f32 := 1.5;
+  println("%d", v_i8);
+  println("%u", v_u8);
+  println("%g", v_f32);
+  asserteqf(v_f32, 1.5, 0.0001);
+
+  // Phase 3: Strings
+  println("\n=== Phase 3: Strings ===");
+
+  // String variable with initializer
+  println("%s", cstr(v_str));
+
+  // String length
+  println("%lld", len(v_str));
+
+  // String concatenation
+  var v_str2: string = "hello ";
+  var v_str3: string = " world";
+  var v_cat: string;
+  v_cat := v_str2 + v_str3;
+  println("%s", cstr(v_cat));
+
+  // wstr conversion (returns non-null UTF-16 pointer)
+  var v_wptr: pointer to wchar = wstr(v_str);
+  println("%d", v_wptr <> nil);
+
+  // cstr returns raw C string pointer
+  var v_cptr: pointer to char = cstr(v_str);
+  println("%d", v_cptr <> nil);
+
+  // Phase 3b: String temporaries -- every one of these once crashed or leaked
+  println("\n=== Phase 3b: String Temporaries ===");
+
+  // Literal operand in concat (left and right)
+  var v_tmp: string;
+  v_tmp := "hello " + v_str2;
+  asserteq("hello hello ", v_tmp, "literal + var");
+  v_tmp := v_str3 + "!";
+  asserteq(" world!", v_tmp, "var + literal");
+  v_tmp := "a" + "b";
+  asserteq("ab", v_tmp, "literal + literal");
+
+  // Concat used directly as an argument
+  println("%s", cstr("hello " + v_str3));
+  asserteq(12, len("hello " + v_str3), "len of concat temp");
+
+  // Literal passed to a string parameter; string result used as a temp
+  println("%s", cstr(greet("world")));
+  asserteq("hello world", greet("world"), "literal arg, string result");
+  asserteq("hello world!", exclaim(greet("world")), "nested string temps");
+  asserteq(12, len(exclaim(greet("world"))), "len of nested temps");
+  v_tmp := greet(v_str3);
+  asserteq("hello  world", v_tmp, "string result assigned");
+
+  // String result discarded
+  greet("dropped");
+
+  // Phase 4: Control flow - if/then/else
+  println("\n=== Phase 4: Control Flow - If/Then/Else ===");
+
+  // if-only (condition true)
+  var cf_x: int32 = 10;
+  if cf_x > 5 then
+    println("if-only true: %d > 5", cf_x);
+  end;
+
+  // if-only (condition false -- no output expected)
+  if cf_x > 100 then
+    println("FAIL: should not print");
+  end;
+
+  // if-else (condition true -> then branch)
+  if cf_x = 10 then
+    println("if-else true: cf_x is 10");
+  else
+    println("FAIL: wrong branch");
+  end;
+
+  // if-else (condition false -> else branch)
+  if cf_x = 99 then
+    println("FAIL: wrong branch");
+  else
+    println("if-else false: cf_x is not 99");
+  end;
+
+  // nested if
+  if cf_x > 0 then
+    if cf_x < 20 then
+      println("nested: 0 < %d < 20", cf_x);
+    end;
+  end;
+
+  // if with boolean condition
+  var cf_flag: boolean = true;
+  if cf_flag then
+    println("bool true branch");
+  end;
+
+  // if with boolean false
+  var cf_flag2: boolean = false;
+  if cf_flag2 then
+    println("FAIL: bool false should skip");
+  else
+    println("bool false -> else");
+  end;
+
+  // Phase 4b: Control flow - while
+  println("\n=== Phase 4b: While Loop ===");
+
+  // Basic while: sum 1..5
+  var w_i: int32 = 0;
+  var w_sum: int32 = 0;
+  while w_i < 5 do
+    w_i := w_i + 1;
+    w_sum := w_sum + w_i;
+  end;
+  println("sum 1..5 = %d", w_sum);
+
+  // While with false condition (no output)
+  while w_i > 100 do
+    println("FAIL: should not run");
+  end;
+
+  // Nested while
+  var w_row: int32 = 0;
+  var w_total: int32 = 0;
+  while w_row < 3 do
+    var w_col: int32 = 0;
+    while w_col < 4 do
+      w_total := w_total + 1;
+      w_col := w_col + 1;
+    end;
+    w_row := w_row + 1;
+  end;
+  println("nested 3x4 = %d", w_total);
+
+  // Phase 4c: Control flow - for
+  println("\n=== Phase 4c: For Loop ===");
+
+  // for..to
+  var fi: int32;
+  var f_sum: int32 = 0;
+  for fi := 1 to 5 do
+    f_sum := f_sum + fi;
+  end;
+  println("for sum 1..5 = %d", f_sum);
+
+  // for..downto
+  var fj: int32;
+  var f_down: int32 = 0;
+  for fj := 3 downto 1 do
+    f_down := f_down + fj;
+  end;
+  println("for downto 3..1 = %d", f_down);
+
+  // nested for
+  var fr: int32;
+  var fc: int32;
+  var f_total: int32 = 0;
+  for fr := 1 to 3 do
+    for fc := 1 to 4 do
+      f_total := f_total + 1;
+    end;
+  end;
+  println("nested for 3x4 = %d", f_total);
+
+  // for single iteration
+  var fk: int32;
+  var f_once: int32 = 0;
+  for fk := 5 to 5 do
+    f_once := f_once + 1;
+  end;
+  println("single iter = %d", f_once);
+
+  // for zero iterations (start > end with to)
+  var fl: int32;
+  var f_zero: int32 = 0;
+  for fl := 10 to 5 do
+    f_zero := f_zero + 1;
+  end;
+  println("zero iters = %d", f_zero);
+
+  // Phase 4d: Control flow - repeat..until
+  println("\n=== Phase 4d: Repeat Loop ===");
+
+  // Basic repeat..until
+  var r_x: int32 = 0;
+  repeat
+    r_x := r_x + 1;
+  until r_x = 5;
+  println("repeat to 5 = %d", r_x);
+
+  // Repeat executes at least once
+  var r_once: int32 = 0;
+  repeat
+    r_once := r_once + 1;
+  until true;
+  println("once = %d", r_once);
+
+  // Repeat with accumulator
+  var r_sum: int32 = 0;
+  var r_n: int32 = 1;
+  repeat
+    r_sum := r_sum + r_n;
+    r_n := r_n + 1;
+  until r_n > 5;
+  println("repeat sum 1..5 = %d", r_sum);
+
+  // Phase 4e: Control flow - break and continue
+  println("\n=== Phase 4e: Break and Continue ===");
+
+  // break in while
+  var br_i: int32 = 0;
+  while br_i < 100 do
+    if br_i = 5 then
+      break;
+    end;
+    br_i := br_i + 1;
+  end;
+  println("while break = %d", br_i);
+
+  // continue in while (sum odd numbers 1..9)
+  var br_sum: int32 = 0;
+  var br_j: int32 = 0;
+  while br_j < 10 do
+    br_j := br_j + 1;
+    if br_j mod 2 = 0 then
+      continue;
+    end;
+    br_sum := br_sum + br_j;
+  end;
+  println("odd sum = %d", br_sum);
+
+  // break in for
+  var br_k: int32 = 0;
+  for br_k := 0 to 99 do
+    if br_k = 3 then
+      break;
+    end;
+  end;
+  println("for break = %d", br_k);
+
+  // continue in repeat (count odd increments)
+  var br_count: int32 = 0;
+  var br_m: int32 = 0;
+  repeat
+    br_m := br_m + 1;
+    if br_m mod 2 = 0 then
+      continue;
+    end;
+    br_count := br_count + 1;
+  until br_m >= 10;
+  println("repeat odd count = %d", br_count);
+
+  // Phase 4f: Control flow - match
+  println("\n=== Phase 4f: Match ===");
+
+  // Simple match
+  var m_x: int32 = 2;
+  match m_x of
+    1: println("match one");
+    2: println("match two");
+    3: println("match three");
+  end;
+
+  // Match with else
+  var m_y: int32 = 99;
+  match m_y of
+    1: println("m_y=1");
+    2: println("m_y=2");
+  else
+    println("m_y=other");
+  end;
+
+  // Match with multiple labels
+  var m_z: int32 = 5;
+  match m_z of
+    1, 2, 3: println("m_z low");
+    4, 5, 6: println("m_z mid");
+    7, 8, 9: println("m_z high");
+  else
+    println("m_z other");
+  end;
+
+  // Match with first arm
+  var m_a: int32 = 1;
+  match m_a of
+    1: println("m_a first");
+    2: println("m_a second");
+  end;
+
+  // Match with no match, no else (falls through)
+  var m_b: int32 = 42;
+  match m_b of
+    1: println("m_b=1");
+    2: println("m_b=2");
+  end;
+  println("m_b passed");
+
+  // Phase 4g: Compound assignments
+  println("\n=== Phase 4g: Compound Assignments ===");
+
+  var ca_a: int32 = 10;
+  ca_a += 5;
+  println("+= %d", ca_a);
+
+  var ca_b: int32 = 20;
+  ca_b -= 7;
+  println("-= %d", ca_b);
+
+  var ca_c: int32 = 6;
+  ca_c *= 3;
+  println("*= %d", ca_c);
+
+  var ca_d: int32 = 100;
+  ca_d /= 4;
+  println("/= %d", ca_d);
+
+  // Compound in loop
+  var ca_sum: int32 = 0;
+  var ca_i: int32 = 1;
+  while ca_i <= 5 do
+    ca_sum += ca_i;
+    ca_i += 1;
+  end;
+  println("sum 1..5 = %d", ca_sum);
+
+  // Phase 5: Routines and calls
+  println("\n=== Phase 5: Routines ===");
+  println("add = %d", add_nums(3, 4));
+  println("fact = %d", factorial(5));
+  println("nested = %d", add_nums(factorial(3), 10));
+
+  // Phase 6: Choices (Enums)
+  println("\n=== Phase 6: Choices ===");
+  println("%d", Color.red);
+  println("%d", Color.green);
+  println("%d", Color.blue);
+  println("%d", Color.alpha);
+  var tc: Color = Color.blue;
+  println("var = %d", tc);
+  println("%d", Dir.north);
+  println("%d", Dir.west);
+
+  // Phase 7: Pointers
+  println("\n=== Phase 7: Pointers ===");
+  var px: int32 = 42;
+  var pp: pointer to int32 = address of px;
+  println("%d", pp^);
+  px := 99;
+  println("%d", pp^);
+  var py: float64 = 3.14;
+  var pq: pointer to float64 = address of py;
+  println("%d", pq^);
+
+  // Phase 16: Records
+  println("\n=== Phase 16: Records ===");
+  var pt: Point;
+  pt.x := 10;
+  pt.y := 20;
+  println("x = %d", pt.x);
+  println("y = %d", pt.y);
+  println("sum = %d", pt.x + pt.y);
+
+  // Phase 16b: Extended records
+  println("\n=== Phase 16b: Extended Records ===");
+
+  // Packed records
+  var pp16: PackedPair;
+  pp16.a := 1;
+  pp16.b := 1000;
+  println("packed a=%d b=%d", pp16.a, pp16.b);
+
+  // Aligned records
+  var al: Aligned32;
+  al.val := 77;
+  println("aligned val=%d", al.val);
+
+  // Base/inherited records
+  var dr: Derived;
+  dr.bx := 10;
+  dr.by := 20;
+  dr.dz := 30;
+  println("derived %d %d %d", dr.bx, dr.by, dr.dz);
+
+  // Nested record fields
+  var ot: Outer;
+  ot.inner.iv := 42;
+  ot.ov := 99;
+  println("nested %d %d", ot.inner.iv, ot.ov);
+
+  // Overlays
+  var vl: Value;
+  vl.asInt := 42;
+  println("overlay int=%d", vl.asInt);
+  vl.asFloat := 2.718;
+  println("overlay float=%d", vl.asFloat);
+
+  var tg: Tagged;
+  tg.tag := 1;
+  tg.iVal := 9999;
+  println("tagged %d %d", tg.tag, tg.iVal);
+
+  // Bit fields
+  var bp: BitPack;
+  bp.a := 7;
+  bp.b := 12;
+  bp.c := 255;
+  println("bits a=%d b=%d c=%d", bp.a, bp.b, bp.c);
+  bp.b := 5;
+  println("after b=5: a=%d b=%d c=%d", bp.a, bp.b, bp.c);
+
+  // Phase 17: Routine types (function pointers)
+  println("\n=== Phase 17: Routine Types ===");
+  fp_op := add_nums;
+  println("fp add = %d", fp_op(3, 4));
+  fp_op := mul_nums;
+  println("fp mul = %d", fp_op(3, 4));
+  fp_op := add_nums;
+  println("fp reassign = %d", fp_op(100, 200));
+
+  // Record with routine-typed fields
+  math_ops.addFn := add_nums;
+  math_ops.mulFn := mul_nums;
+  println("rec addFn = %d", math_ops.addFn(5, 6));
+  println("rec mulFn = %d", math_ops.mulFn(5, 6));
+
+  // Phase 20: Intrinsics (size, paramcount, paramstr)
+  println("\n=== Phase 20: Intrinsics ===");
+  println("size(int32) = %lld", size(int32));
+  println("size(int64) = %lld", size(int64));
+  println("size(boolean) = %lld", size(boolean));
+  println("size(pointer) = %lld", size(pointer));
+  println("paramcount = %lld", paramcount());
+  println("paramstr(0) = %s", paramstr(0));
+
+  // Phase 21: Memory management (getmem, freemem, resizemem, setlength)
+  println("\n=== Phase 21: Memory Management ===");
+  getmem(mbuf);
+  freemem(mbuf);
+
+  getmem(mbuf);
+  resizemem(mbuf, 1024);
+  setlength(mbuf, 2048);
+  freemem(mbuf);
+  println("memory ops ok");
+
+  // Phase 22: Arrays (static array declaration, indexing)
+  println("\n=== Phase 22: Arrays ===");
+  arr5[0] := 10;
+  arr5[1] := 20;
+  arr5[2] := 30;
+  arr5[3] := 40;
+  arr5[4] := 50;
+  println("arr5[0] = %d", arr5[0]);
+  println("arr5[2] = %d", arr5[2]);
+  println("arr5[4] = %d", arr5[4]);
+  println("array test ok");
+
+  // Phase 25: Dynamic arrays (array of T, setlength, len, indexing)
+  println("\n=== Phase 25: Dynamic Arrays ===");
+  setlength(darr, 5);
+  println("len after setlength = %lld", len(darr));
+  darr[0] := 100;
+  darr[1] := 200;
+  darr[2] := 300;
+  darr[3] := 400;
+  darr[4] := 500;
+  println("darr[0] = %d", darr[0]);
+  println("darr[2] = %d", darr[2]);
+  println("darr[4] = %d", darr[4]);
+  setlength(darr, 7);
+  darr[5] := 600;
+  darr[6] := 700;
+  println("len after grow = %lld", len(darr));
+  println("darr[6] = %d", darr[6]);
+  println("dynamic array ok");
+
+  // Phase 24: Exception handling (guard/except/finally/throw/throwcode)
+  println("\n=== Phase 24: Exception Handling ===");
+
+  // guard/except with throw
+  guard
+    throw("test error");
+    println("should not print");
+  except
+    println("caught, code=%lld, msg=%s", exccode(), excmsg());
+  end;
+
+  // guard/except with throwcode
+  guard
+    throwcode(42, "custom error");
+  except
+    println("code=%lld, msg=%s", exccode(), excmsg());
+  end;
+
+  // guard/finally (no except)
+  guard
+    println("guard-finally body");
+  finally
+    println("finally runs");
+  end;
+  println("after guard-finally");
+
+  // guard/except/finally
+  guard
+    throw("err2");
+  except
+    println("except caught");
+  finally
+    println("finally2 runs");
+  end;
+
+  // nested guard blocks
+  guard
+    guard
+      throw("inner error");
+    except
+      println("inner caught");
+    end;
+  finally
+    println("outer finally");
+  end;
+
+  // hw exception: div by zero
+  guard
+    x := 10 div get_zero();
+    println("should not print: %d", x);
+  except
+    println("hw caught, code=%lld, msg=%s", exccode(), excmsg());
+  end;
+
+  // multiple sequential guard blocks sharing locals
+  var ga: int32 = 0;
+  var gb: int32 = 0;
+  guard
+    ga := 10;
+  except
+    println("should not reach");
+  end;
+  guard
+    gb := 20;
+  except
+    println("should not reach");
+  end;
+  println("ga=%d, gb=%d", ga, gb);
+
+  // exception propagation from nested routine call
+  guard
+    throw_helper();
+  except
+    println("propagated, code=%lld", exccode());
+  end;
+
+  println("done");
+
+  // Phase 25: Misc expressions (wstring, address_of, match range, downto)
+  println("\n=== Phase 25: Misc Expressions ===");
+  var ws25: wstring = w"hello";
+  println("wstring len = %lld", len(ws25));
+
+  var p25: pointer to int32;
+  p25 := address of x;
+  println("addr deref = %d", p25^);
+
+  var mval25: int32 = 3;
+  match mval25 of
+    1..5: println("match range 1..5 hit");
+    10: println("match 10");
+  else
+    println("match else");
+  end;
+
+  var dsum25: int32 = 0;
+  for x := 5 downto 1 do
+    dsum25 += x;
+  end;
+  println("downto sum = %d", dsum25);
+
+  // Phase 25: Type Casts
+  println("\n=== Phase 25: Type Casts ===");
+  var cast_x: int64 = 12345;
+  var cast_y: int32 = int32(cast_x);
+  println("int64 to int32: %d", cast_y);
+
+  var cast_f: float64 = 3.14;
+  var cast_i: int32 = int32(cast_f);
+  println("float64 to int32: %d", cast_i);
+
+  var cast_b: uint8 = uint8(cast_y);
+  println("int32 to uint8: %u", cast_b);
+
+  var cast_w: int64 = int64(cast_y);
+  println("int32 to int64: %lld", cast_w);
+
+  // Phase 26: Record Literals
+  println("\n=== Phase 26: Record Literals ===");
+  // Basic int fields
+  var rp: Point = Point(x: 42, y: 99);
+  println("record literal x: %d", rp.x);
+  println("record literal y: %d", rp.y);
+  // Reassignment
+  rp := Point(x: 100, y: 200);
+  println("reassign x: %d", rp.x);
+  println("reassign y: %d", rp.y);
+  // Expression field values
+  var ra: int32 = 5;
+  var rq: Point = Point(x: ra * 2, y: ra + 3);
+  println("expr field x: %d", rq.x);
+  println("expr field y: %d", rq.y);
+  // String fields
+  var rpn: Person = Person(name: "Alice", age: 30);
+  println("person name: %s", cstr(rpn.name));
+  println("person age: %d", rpn.age);
+  // Nested record literal fields
+  var rln: Line = Line(start: Point(x: 1, y: 2), finish: Point(x: 10, y: 20));
+  println("line start: %d %d", rln.start.x, rln.start.y);
+  println("line finish: %d %d", rln.finish.x, rln.finish.y);
+
+  // Phase 27: Routine Overloading
+  println("\n=== Phase 27: Routine Overloading ===");
+  println("ovl_add(1,2) = %d", ovl_add(1, 2));
+  println("ovl_add(1.5,2.5) = %g", ovl_add(1.5, 2.5));
+  println("ovl_add(1,2,3) = %d", ovl_add(1, 2, 3));
+
+  // Phase 28: Conditional Compilation
+  println("\n=== Phase 28: Conditional Compilation ===");
+  var cc_result: int32 = 0;
+
+  // @ifdef with predefined symbol
+  @ifdef MYRISSA
+    cc_result := cc_result + 1;
+  @endif
+
+  // @ifndef with undefined symbol
+  @ifndef NONEXISTENT_SYMBOL
+    cc_result := cc_result + 1;
+  @endif
+
+  // @ifdef false branch skipped
+  @ifdef NONEXISTENT_SYMBOL
+    cc_result := cc_result + 100;
+  @endif
+
+  // @ifdef/@else
+  @ifdef NONEXISTENT_SYMBOL
+    cc_result := cc_result + 100;
+  @else
+    cc_result := cc_result + 1;
+  @endif
+
+  // @define/@ifdef
+  @define MY_TEST_SYMBOL
+  @ifdef MY_TEST_SYMBOL
+    cc_result := cc_result + 1;
+  @endif
+
+  // @undef/@ifdef/@else
+  @undef MY_TEST_SYMBOL
+  @ifdef MY_TEST_SYMBOL
+    cc_result := cc_result + 100;
+  @else
+    cc_result := cc_result + 1;
+  @endif
+
+  // @elseif
+  @ifdef NONEXISTENT_SYMBOL
+    cc_result := cc_result + 100;
+  @elseif MYRISSA
+    cc_result := cc_result + 1;
+  @else
+    cc_result := cc_result + 100;
+  @endif
+
+  // Nested @ifdef
+  @ifdef MYRISSA
+    @ifdef CPUX64
+      cc_result := cc_result + 1;
+    @endif
+  @endif
+
+  // Platform defines
+  @ifdef TARGET_WIN64
+    cc_result := cc_result + 1;
+  @elseif TARGET_LINUX64
+    cc_result := cc_result + 1;
+  @endif
+
+  // Module kind defines
+  @ifdef BUILD_EXE
+    cc_result := cc_result + 1;
+  @endif
+
+  println("conditional compilation: %d / 9 passed", cc_result);
+  asserteq(cc_result, 9, "conditional compilation");
+
+  // Phase 29: External Clause (FFI binding)
+  println("\n=== Phase 29: External Clause ===");
+  var ext_pass: int32 = 0;
+  var ext_tick: uint64 = 0;
+  var ext_pid: int32 = 0;
+
+  // Case 1: string literal lib + name alias
+  if myabs(-42) = 42 then
+    ext_pass := ext_pass + 1;
+  end;
+
+  // Case 2: const ident lib + name alias
+  if mytoupper(97) = 65 then
+    ext_pass := ext_pass + 1;
+  end;
+
+  // Case 3: no lib, just name alias
+  if myabs2(-99) = 99 then
+    ext_pass := ext_pass + 1;
+  end;
+
+  // Case 4: platform-specific
+  @ifdef TARGET_WIN64
+    ext_tick := GetTick();
+    if ext_tick > 0 then
+      ext_pass := ext_pass + 1;
+    end;
+    ext_tick := GetTick2();
+    if ext_tick > 0 then
+      ext_pass := ext_pass + 1;
+    end;
+    println("external clause: %d / 5 passed", ext_pass);
+    asserteq(ext_pass, 5, "external clause");
+  @endif
+
+  @ifdef TARGET_LINUX64
+    ext_pid := ext_getpid();
+    if ext_pid > 0 then
+      ext_pass := ext_pass + 1;
+    end;
+    println("external clause: %d / 4 passed", ext_pass);
+    asserteq(ext_pass, 4, "external clause");
+  @endif
+
+  // Phase 30: Set Operations
+  println("\n=== Phase 30: Set Operations ===");
+  var set_pass: int32;
+  set_pass := 0;
+
+  // Empty set
+  var s_empty: set;
+  s_empty := [];
+  set_pass := set_pass + 1;
+
+  // Single element
+  var s_one: set;
+  s_one := [5];
+  if 5 in s_one then
+    set_pass := set_pass + 1;
+  end;
+
+  // Multiple elements
+  var s_multi: set;
+  s_multi := [1, 3, 5, 7];
+  if (1 in s_multi) and (3 in s_multi) and (5 in s_multi) and (7 in s_multi) then
+    set_pass := set_pass + 1;
+  end;
+  if not (2 in s_multi) then
+    set_pass := set_pass + 1;
+  end;
+
+  // Range
+  var s_range: set;
+  s_range := [1..10];
+  if (1 in s_range) and (5 in s_range) and (10 in s_range) then
+    set_pass := set_pass + 1;
+  end;
+  if not (11 in s_range) then
+    set_pass := set_pass + 1;
+  end;
+
+  // Mixed elements and ranges
+  var s_mixed: set;
+  s_mixed := [1, 3..7, 10];
+  if (1 in s_mixed) and (5 in s_mixed) and (10 in s_mixed) and not (2 in s_mixed) then
+    set_pass := set_pass + 1;
+  end;
+
+  // Union (+)
+  var s_a: set;
+  var s_b: set;
+  s_a := [1, 2, 3];
+  s_b := [3, 4, 5];
+  var s_union: set;
+  s_union := s_a + s_b;
+  if (1 in s_union) and (3 in s_union) and (5 in s_union) then
+    set_pass := set_pass + 1;
+  end;
+
+  // Intersection (*)
+  var s_isect: set;
+  s_isect := s_a * s_b;
+  if (3 in s_isect) and not (1 in s_isect) and not (5 in s_isect) then
+    set_pass := set_pass + 1;
+  end;
+
+  // Difference (-)
+  var s_diff: set;
+  s_diff := s_a - s_b;
+  if (1 in s_diff) and (2 in s_diff) and not (3 in s_diff) then
+    set_pass := set_pass + 1;
+  end;
+
+  // Equality and inequality
+  var s_c: set;
+  var s_d: set;
+  s_c := [1, 2, 3];
+  s_d := [1, 2, 3];
+  if s_c = s_d then
+    set_pass := set_pass + 1;
+  end;
+  if s_c <> s_b then
+    set_pass := set_pass + 1;
+  end;
+
+  println("set operations: %d / 12 passed", set_pass);
+  asserteq(set_pass, 12, "set operations");
+
+  // Phase 31: New/Dispose (typed heap allocation)
+  println("\n=== Phase 31: New/Dispose ===");
+  var nd_pass: int32;
+  nd_pass := 0;
+
+  // Allocate a record on the heap
+  var hp: pointer to Point;
+  new(hp);
+  hp^.x := 42;
+  hp^.y := 99;
+  if hp^.x = 42 then
+    nd_pass := nd_pass + 1;
+  end;
+  if hp^.y = 99 then
+    nd_pass := nd_pass + 1;
+  end;
+
+  // Modify through pointer
+  hp^.x := hp^.x + 10;
+  if hp^.x = 52 then
+    nd_pass := nd_pass + 1;
+  end;
+
+  // Dispose sets pointer to nil
+  dispose(hp);
+  if hp = nil then
+    nd_pass := nd_pass + 1;
+  end;
+
+  // Allocate a simple int on the heap
+  var hi: pointer to int32;
+  new(hi);
+  hi^ := 777;
+  if hi^ = 777 then
+    nd_pass := nd_pass + 1;
+  end;
+  dispose(hi);
+  if hi = nil then
+    nd_pass := nd_pass + 1;
+  end;
+
+  println("new/dispose: %d / 6 passed", nd_pass);
+  asserteq(nd_pass, 6, "new/dispose");
+
+  println("compliance suite complete");
+end.

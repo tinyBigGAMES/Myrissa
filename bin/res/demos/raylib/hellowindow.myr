@@ -1,0 +1,47 @@
+/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+*******************************************************************************/
+
+module exe hellowindow;
+
+@addverinfo on;
+@vimajor 1;
+@viminor 0;
+@vipatch 0;
+@viproductname "HelloWindow Demo";
+@videscription "HelloWindow Demo";
+@vifilename "hellowindow.exe";
+@vicompanyname "tinyBigGAMES™ LLC";
+@vicopyright "Copyright © 2026 tinyBigGAMES LLC";
+@exeicon "$P:res/assets/icons/myrissa.ico";
+
+@modulepath "$P:res/libs/vendor/raylib";
+
+//@target linux64;
+
+import 
+  raylib;
+
+begin
+  println("hello");
+  
+  raylib.InitWindow(800, 450, "Myrissa: [raylib] HelloWindow");
+  raylib.SetTargetFPS(60);
+
+  while not raylib.WindowShouldClose() do
+    raylib.BeginDrawing();
+      raylib.ClearBackground(raylib.RAYWHITE);
+      raylib.DrawText("Hello from Myrissa!", 280, 200, 20, raylib.DARKGREEN);
+    raylib.EndDrawing();
+ end;
+
+ raylib.CloseWindow();  
+  
+end.

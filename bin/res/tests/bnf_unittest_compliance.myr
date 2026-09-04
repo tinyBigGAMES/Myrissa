@@ -1,0 +1,133 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_unittest_compliance.myr
+
+  Unit test mode compliance suite. Exercises @unittestmode on: test blocks
+  after end., test-local var sections, all assert forms inside tests,
+  initialize/finalize around the runner, and the runner entry point replacing
+  the normal main block. Every test passes; the process exit code must be 0.
+*******************************************************************************/
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module exe bnf_unittest_compliance;
+
+@unittestmode on;
+
+type
+  TPoint = record
+    x: int32;
+    y: int32;
+  end;
+
+var
+  init_count: int32;
+
+routine add(const a: int32; const b: int32): int32;
+begin
+  return a + b;
+end;
+
+routine mul(const a: int32; const b: int32): int32;
+begin
+  return a * b;
+end;
+
+routine half(const v: float64): float64;
+begin
+  return v / 2.0;
+end;
+
+routine make_point(const ax: int32; const ay: int32): TPoint;
+var
+  p: TPoint;
+begin
+  p.x := ax;
+  p.y := ay;
+  return p;
+end;
+
+routine is_even(const v: int32): boolean;
+begin
+  return (v mod 2) = 0;
+end;
+
+routine greet(const who: string): string;
+begin
+  return "hello " + who;
+end;
+
+initialize
+  init_count := init_count + 1;
+end;
+
+finalize
+  println("finalize ran");
+end;
+
+begin
+  // Replaced by the test runner when @unittestmode is on. Reaching this
+  // would be a failure.
+  println("MAIN BLOCK MUST NOT RUN IN UNIT TEST MODE");
+  asserteq(0, 1, "main block executed in unit test mode");
+end.
+
+test "integer arithmetic"
+begin
+  asserteq(3, add(1, 2));
+  asserteq(0, add(-1, 1));
+  asserteq(-3, add(-1, -2));
+  asserteq(12, mul(3, 4));
+  asserteq(0, mul(0, 99));
+end;
+
+test "float arithmetic"
+begin
+  asserteq(1.5, half(3.0));
+  asserteq(0.0, half(0.0));
+end;
+
+test "boolean results"
+begin
+  asserteq(true, is_even(4));
+  asserteq(false, is_even(7));
+end;
+
+test "string results"
+begin
+  asserteq("hello world", greet("world"));
+  asserteq(11, len(greet("world")));
+end;
+
+test "test-local variables"
+var
+  p: TPoint;
+  total: int32;
+  i: int32;
+begin
+  p := make_point(3, 4);
+  asserteq(3, p.x);
+  asserteq(4, p.y);
+  total := 0;
+  for i := 1 to 10 do
+    total := total + i;
+  end;
+  asserteq(55, total, "loop inside a test block");
+end;
+
+test "initialize ran before tests"
+begin
+  asserteq(1, init_count, "initialize section runs once before the runner");
+end;
+
+test "assert with message"
+begin
+  asserteq(7, add(3, 4), "message form of asserteq");
+end;

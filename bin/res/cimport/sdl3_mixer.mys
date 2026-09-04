@@ -1,0 +1,33 @@
+/*******************************************************************************
+  CPaskal™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://cpaskal.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  sdl3_mixer.cps
+
+  CImport script for SDL3_mixer - Audio mixer library for SDL3. Generates
+  CPaskal bindings from the SDL3_mixer C headers.
+*******************************************************************************/
+
+module script sdl3_mixer;
+
+begin
+  SetSavePreprocessed(false);
+  SetBindingMode("dynamic");
+  SetModuleName("SDL3_mixer");
+  SetDllName("SDL3_mixer");
+  SetOutputPath("res/libs/vendor/sdl3_mixer");
+  SetDllPath("res/libs/vendor/sdl3_mixer/win64/SDL3_mixer.dll");
+  AddIncludePath("res/libs/vendor/sdl3/include", "");
+  AddSourcePath("res/libs/vendor/sdl3_mixer/include/SDL3");
+  AddUsesUnit("SDL3");
+  AddExcludedType("va_list");
+  SetHeader("res/libs/vendor/sdl3_mixer/include/SDL3/SDL_mixer.h");
+  AddCopyDll("win64", "$P:res/libs/vendor/sdl3_mixer/win64/SDL3_mixer.dll");
+  Process();
+end.

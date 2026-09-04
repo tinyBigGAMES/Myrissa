@@ -1,0 +1,69 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_link_lib_seh.myr
+
+  Static lib exercising SEH across the lib boundary: guarded div,
+  raw div, exccode, throwcode.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module lib bnf_link_lib_seh;
+
+// guard inside the lib, caught inside the lib
+public routine clink seh_div(const a: int32; const b: int32): int32;
+var
+  r: int32;
+begin
+  r := 0;
+  guard
+    r := a div b;
+  except
+    r := -1;
+  end;
+  return r;
+end;
+
+// no guard: the exe catches it
+public routine clink raw_div(const a: int32; const b: int32): int32;
+begin
+  return a div b;
+end;
+
+// guard inside the lib sets exccode() via the consumer's runtime filter
+public routine clink seh_code(const a: int32; const b: int32): int32;
+var
+  r: int32;
+begin
+  r := 0;
+  guard
+    r := a div b;
+  except
+    r := exccode();
+  end;
+  return r;
+end;
+
+// throwcode inside the lib goes through the consumer's runtime
+public routine clink seh_raise(const code: int32): int32;
+var
+  r: int32;
+begin
+  r := 0;
+  guard
+    throwcode(code, "lib raise");
+  except
+    r := exccode();
+  end;
+  return r;
+end;
+
+end.

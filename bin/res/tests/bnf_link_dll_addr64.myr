@@ -1,0 +1,31 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_link_dll_addr64.myr
+
+  DLL wrapping a foreign C archive with ADDR64 relocations.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module dll bnf_link_dll_addr64;
+
+@addlibrarypath "$P:res/tests/link/libtest";
+
+// C archive with a function-pointer table in .data: absolute 64-bit
+// relocations. win64 needs .reloc DIR64, linux64 needs R_X86_64_RELATIVE.
+routine clink addr64_sum(): int32; external "link_addr64";
+
+public routine clink dlladdr64_get(): int32;
+begin
+  return addr64_sum();
+end;
+
+end.

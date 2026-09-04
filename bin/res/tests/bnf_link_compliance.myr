@@ -1,0 +1,163 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information  
+ -------------------------------------------------------------------------------
+  bnf_link_compliance.myr -- Linking compliance suite
+
+  Static libs, lib->lib, DLL/lib globals, search paths outside output,
+  SEH across the lib boundary (with exe-only twins as baselines), foreign
+  zig-built archives (multi-member, ADDR64 tables), ADDR64 inside a DLL,
+  and two DLLs rebased in one process. Exit code = failed asserts.
+
+  Producers built first by gate.cmd (same target/opt):
+    bnf_dll_compliance, bnf_link_lib_inner, bnf_link_lib_outer,
+    bnf_link_lib_dllvar, bnf_link_lib_seh, bnf_link_dll_addr64,
+    bnf_link_lib_path (then MOVED from output to res/tests/link/libtest).
+  Foreign archives live in res/tests/link/libtest (build_c.cmd).
+*******************************************************************************/
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module exe bnf_link_compliance;
+
+@addlibrarypath "$P:output";
+@addlibrarypath "$P:res/tests/link/libtest";
+@copydll "$P:output/bnf_dll_compliance.dll";
+@ifdef TARGET_WIN64
+// tick.lib is a foreign C object whose drectve says /DEFAULTLIB:kernel32.lib.
+// The chase must find the real Windows SDK kernel32.lib on the search path
+// and bind GetTickCount64 -> kernel32.dll.
+@addlibrarypath "C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0/um/x64";
+@endif
+
+// lib -> lib
+routine clink outer_get(): int32; external "bnf_link_lib_outer";
+routine clink outer_safe_div(const a: int32; const b: int32): int32; external "bnf_link_lib_outer";
+var outer_val: int32; external "bnf_link_lib_outer";
+
+// DLL var through a static lib, and directly
+routine clink libv_read(): int32; external "bnf_link_lib_dllvar";
+routine clink dll_get_global(): int32; external "bnf_dll_compliance";
+routine clink dll_add(const a: int32; const b: int32): int32; external "bnf_dll_compliance";
+var dll_global_x: int32; external "bnf_dll_compliance";
+
+// search path only
+routine clink libpath_answer(): int32; external "bnf_link_lib_path";
+
+// SEH across the boundary
+routine clink seh_div(const a: int32; const b: int32): int32; external "bnf_link_lib_seh";
+routine clink raw_div(const a: int32; const b: int32): int32; external "bnf_link_lib_seh";
+routine clink seh_code(const a: int32; const b: int32): int32; external "bnf_link_lib_seh";
+routine clink seh_raise(const code: int32): int32; external "bnf_link_lib_seh";
+
+// foreign archives
+routine clink addr64_sum(): int32; external "link_addr64";
+routine clink ma_sum(const a: int64; const b: int64): int64; external "link_multi";
+
+// ADDR64 inside a DLL, and a second DLL in the same process
+routine clink dlladdr64_get(): int32; external "bnf_link_dll_addr64";
+
+@ifdef TARGET_WIN64
+routine clink tick_ms(): uint64; external "tick";
+// MinGW/GNU-compiled COFF archive (x86_64-windows-gnu)
+routine clink gnu_add(const a: int32; const b: int32): int32; external "link_gnu_test";
+@endif
+
+// exe-only twins: if these fail, the fault is in exceptions, not linking
+routine exe_div0(const a: int32; const b: int32): int32;
+var
+  r: int32;
+begin
+  r := 0;
+  guard
+    r := a div b;
+  except
+    r := -1;
+  end;
+  return r;
+end;
+
+routine exe_code_of(const a: int32; const b: int32): int32;
+var
+  r: int32;
+begin
+  r := 0;
+  guard
+    r := a div b;
+  except
+    r := exccode();
+  end;
+  return r;
+end;
+
+routine exe_raise_of(const code: int32): int32;
+var
+  r: int32;
+begin
+  r := 0;
+  guard
+    throwcode(code, "exe raise");
+  except
+    r := exccode();
+  end;
+  return r;
+end;
+
+var
+  r: int32;
+
+begin
+  println("=== lib -> lib ===");
+  asserteq(11, outer_get(), "transitive lib: inner init ran, outer init added 10");
+  asserteq(11, outer_val, "lib var import");
+  asserteq(5, outer_safe_div(10, 2), "guard inside inner lib, normal");
+  asserteq(-1, outer_safe_div(10, 0), "guard inside inner lib, div by zero");
+
+  println("=== DLL globals ===");
+  asserteq(42, dll_get_global(), "DLL global via DLL routine");
+  asserteq(42, dll_global_x, "DLL global via exe import");
+  asserteq(42, libv_read(), "DLL global via static lib import");
+
+  println("=== search path ===");
+  asserteq(42, libpath_answer(), "lib found only through $P:res/tests/link/libtest");
+
+  println("=== SEH across lib boundary ===");
+  asserteq(-1, exe_div0(10, 0), "exe: first hardware fault caught");
+  asserteq(-1, exe_div0(10, 0), "exe: second hardware fault caught");
+  asserteq(2, exe_code_of(10, 0), "exe: exccode is divide by zero");
+  asserteq(42, exe_raise_of(42), "exe: throwcode caught with its code");
+  asserteq(5, seh_div(10, 2), "lib guard, normal");
+  asserteq(-1, seh_div(10, 0), "lib guard, div by zero");
+  r := 0;
+  guard
+    r := raw_div(10, 0);
+  except
+    r := -1;
+  end;
+  asserteq(-1, r, "exe guard catches unguarded lib div by zero");
+  asserteq(2, seh_code(10, 0), "lib guard sets exccode to divide by zero");
+  asserteq(42, seh_raise(42), "throwcode inside lib caught with its code");
+
+  println("=== foreign archives ===");
+  asserteq(140, addr64_sum(), "ADDR64 pointer table via .reloc / .rela.dyn");
+  asserteq(30, ma_sum(0, 1), "multi-member archive: member B pulled transitively");
+
+  println("=== DLLs ===");
+  asserteq(140, dlladdr64_get(), "ADDR64 table inside a DLL/.so survives loader placement");
+  asserteq(5, dll_add(2, 3), "two Myrissa DLLs in one process, second one rebased");
+
+@ifdef TARGET_WIN64
+  println("=== SDK import lib ===");
+  asserteq(true, tick_ms() > 0, "GetTickCount64 reached through SDK kernel32.lib");
+
+  println("=== MinGW/GNU COFF archive ===");
+  asserteq(15, gnu_add(7, 8), "x86_64-windows-gnu compiled archive links and runs");
+@endif
+
+  println("link compliance OK");
+end.

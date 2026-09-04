@@ -1,0 +1,172 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+*******************************************************************************/
+
+module exe mixermusic;
+
+@addverinfo on;
+@vimajor 1;
+@viminor 0;
+@vipatch 0;
+@viproductname "MixerMusic Demo";
+@videscription "MixerMusic Demo";
+@vifilename "mixermusic.exe";
+@vicompanyname "tinyBigGAMES™ LLC";
+@vicopyright "Copyright © 2026 tinyBigGAMES LLC";
+@exeicon "$P:res/assets/icons/myrissa.ico";
+
+@modulepath "$P:res/libs/vendor/sdl3";
+@modulepath "$P:res/libs/vendor/sdl3_mixer";
+
+import
+  SDL3,
+  SDL3_mixer;
+
+const
+  CScreenWidth = 800;
+  CScreenHeight = 600;
+  CWindowTitle = "Myrissa: [SDL3_Mixer] MixerMusic";
+
+var
+  LWindow: pointer to SDL3.SDL_Window;
+  LRenderer: pointer to SDL3.SDL_Renderer;
+  LMixer: pointer to SDL3_mixer.MIX_Mixer;
+  LAudio: pointer to SDL3_mixer.MIX_Audio;
+  LTrack: pointer to SDL3_mixer.MIX_Track;
+  LProps: SDL3.SDL_PropertiesID;
+  LEvent: SDL3.SDL_Event;
+  LRunning: boolean;
+
+begin
+  LWindow := nil;
+  LRenderer := nil;
+  LMixer := nil;
+  LAudio := nil;
+  LTrack := nil;
+  LRunning := true;
+
+  // Initialize SDL3 with video and audio
+  if not SDL3.SDL_Init(SDL3.SDL_INIT_VIDEO or SDL3.SDL_INIT_AUDIO) then
+    println("Failed to init SDL: {}", SDL3.SDL_GetError());
+    return 1;
+  end;
+
+  // Initialize SDL3_Mixer
+  if not SDL3_mixer.MIX_Init() then
+    println("Failed to init SDL3_Mixer: {}", SDL3.SDL_GetError());
+    SDL3.SDL_Quit();
+    return 1;
+  end;
+
+  // Create window
+  LWindow := SDL3.SDL_CreateWindow(CWindowTitle, CScreenWidth, CScreenHeight, 0);
+  if LWindow = nil then
+    println("Failed to create window: {}", SDL3.SDL_GetError());
+    SDL3_mixer.MIX_Quit();
+    SDL3.SDL_Quit();
+    return 1;
+  end;
+
+  // Create renderer
+  LRenderer := SDL3.SDL_CreateRenderer(LWindow, nil);
+  if LRenderer = nil then
+    println("Failed to create renderer: {}", SDL3.SDL_GetError());
+    SDL3.SDL_DestroyWindow(LWindow);
+    SDL3_mixer.MIX_Quit();
+    SDL3.SDL_Quit();
+    return 1;
+  end;
+
+  // Create mixer device (uses default playback device)
+  LMixer := SDL3_mixer.MIX_CreateMixerDevice(SDL3.SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nil);
+  if LMixer = nil then
+    println("Failed to create mixer: {}", SDL3.SDL_GetError());
+    SDL3.SDL_DestroyRenderer(LRenderer);
+    SDL3.SDL_DestroyWindow(LWindow);
+    SDL3_mixer.MIX_Quit();
+    SDL3.SDL_Quit();
+    return 1;
+  end;
+
+  // Load audio file  
+  LAudio := SDL3_mixer.MIX_LoadAudio(LMixer, "../res/assets/music/music.ogg", true);
+  if LAudio = nil then
+    println("Failed to load audio: {}", SDL3.SDL_GetError());
+    SDL3_mixer.MIX_DestroyMixer(LMixer);
+    SDL3.SDL_DestroyRenderer(LRenderer);
+    SDL3.SDL_DestroyWindow(LWindow);
+    SDL3_mixer.MIX_Quit();
+    SDL3.SDL_Quit();
+    return 1;
+  end;
+
+  // Create track
+  LTrack := SDL3_mixer.MIX_CreateTrack(LMixer);
+  if LTrack = nil then
+    println("Failed to create track: {}", SDL3.SDL_GetError());
+    SDL3_mixer.MIX_DestroyAudio(LAudio);
+    SDL3_mixer.MIX_DestroyMixer(LMixer);
+    SDL3.SDL_DestroyRenderer(LRenderer);
+    SDL3.SDL_DestroyWindow(LWindow);
+    SDL3_mixer.MIX_Quit();
+    SDL3.SDL_Quit();
+    return 1;
+  end;
+
+  // Assign audio to track
+  SDL3_mixer.MIX_SetTrackAudio(LTrack, LAudio);
+
+  // Create properties for looping (-1 = infinite loop)
+  LProps := SDL3.SDL_CreateProperties();
+  SDL3.SDL_SetNumberProperty(LProps, SDL3_mixer.MIX_PROP_PLAY_LOOPS_NUMBER, -1);
+
+  // Play track with looping
+  SDL3_mixer.MIX_PlayTrack(LTrack, LProps);
+
+  // Clean up properties
+  SDL3.SDL_DestroyProperties(LProps);
+
+  println("Playing song (looping) - Press ESC or close window to exit");
+
+  // Main loop
+  while LRunning do
+    // Handle events
+    while SDL3.SDL_PollEvent(address of LEvent) do
+      if LEvent.type_ = SDL3.SDL_EVENT_QUIT then
+        LRunning := false;
+      end;
+      if LEvent.type_ = SDL3.SDL_EVENT_KEY_DOWN then
+        if LEvent.key.key = SDL3.SDLK_ESCAPE then
+          LRunning := false;
+        end;
+      end;
+    end;
+
+    // Clear to dark blue
+    SDL3.SDL_SetRenderDrawColor(LRenderer, 20, 40, 80, 255);
+    SDL3.SDL_RenderClear(LRenderer);
+
+    // Present
+    SDL3.SDL_RenderPresent(LRenderer);
+
+    // Small delay to avoid burning CPU
+    SDL3.SDL_Delay(16);
+  end;
+
+  // Cleanup
+  SDL3_mixer.MIX_StopTrack(LTrack, 0);
+  SDL3_mixer.MIX_DestroyTrack(LTrack);
+  SDL3_mixer.MIX_DestroyAudio(LAudio);
+  SDL3_mixer.MIX_DestroyMixer(LMixer);
+  SDL3.SDL_DestroyRenderer(LRenderer);
+  SDL3.SDL_DestroyWindow(LWindow);
+  SDL3_mixer.MIX_Quit();
+  SDL3.SDL_Quit();
+end.

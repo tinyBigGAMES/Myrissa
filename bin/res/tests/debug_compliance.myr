@@ -1,0 +1,64 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  debug_compliance.myr
+
+  Debugger compliance test. Exercises breakpoints, local/global variable
+  inspection, and routine stepping. Run with -d flag.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module exe debug_compliance;
+
+@ifdef TARGET_WIN64
+  @target win64;
+@else
+  @message error "debug_compliance: requires Windows target";
+@endif
+
+var
+  gx: int32 = 100;
+  gy: int32 = 200;
+
+routine add(a: int32; b: int32): int32;
+  var sum: int32;
+begin
+  sum := a + b;
+  @breakpoint;
+  return sum;
+end;
+
+routine mul(x: int32; y: int32): int32;
+  var product: int32;
+begin
+  product := x * y;
+  @breakpoint;
+  return product;
+end;
+
+begin
+  var a: int32 = 10;
+  var b: int32 = 20;
+
+  @breakpoint;
+  var c: int32 = add(a, b);
+  println("c = %d", c);
+
+  var d: int32 = mul(a, b);
+  println("d = %d", d);
+
+  @breakpoint;
+  gx := gx + c;
+  gy := gy + d;
+  println("gx = %d, gy = %d", gx, gy);
+
+  println("debug compliance done");
+end.

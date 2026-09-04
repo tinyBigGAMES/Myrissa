@@ -1,0 +1,24 @@
+/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  hello.myr
+
+  Hello-world demo. Minimal exe module with emoji output.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module exe hello;
+
+@optimize full;
+
+begin
+  println("Hello, I am %s! 🚀🔥✨", "Myrissa");
+end.

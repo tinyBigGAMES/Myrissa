@@ -1,0 +1,545 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_unit_compliance.myr
+
+  BNF compliance test for the 'unit' module kind. Exercises every declaration
+  form with public/private visibility: constants, types, variables, routines,
+  forward declarations, overloads, conditional compilation, C++ interop,
+  initialize/finalize blocks, and test blocks.
+
+  This unit is imported by bnf_exe_compliance.myr for cross-module testing.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module unit bnf_unit_compliance;
+
+// --- Conditional Compilation (Section 7) ---
+
+@define UNIT_FEATURE_A
+
+@ifdef UNIT_FEATURE_A
+// This section compiles because UNIT_FEATURE_A is defined
+@endif
+
+@ifndef UNIT_FEATURE_B
+// This section compiles because UNIT_FEATURE_B is not defined
+@endif
+
+@ifdef UNIT_FEATURE_A
+@undef UNIT_FEATURE_A
+@endif
+
+@ifndef UNIT_FEATURE_A
+@define UNIT_FEATURE_A
+@endif
+
+// --- Forward Declarations (Section 8) ---
+
+forward type UnitForwardRec;
+forward routine unit_forward_add(a: int32; b: int32): int32;
+
+// --- Public Constants (Section 8) ---
+
+public const
+  // Typed integer constants
+  UNIT_VERSION: int32 = 1;
+  UNIT_MAX_VAL: int64 = 9999999;
+  UNIT_MAX_U8: uint8 = 255;
+  UNIT_MAX_U16: uint16 = 65535;
+
+  // Float constants
+  UNIT_PI: float64 = 3.14159265;
+  UNIT_HALF: float32 = 0.5f;
+
+  // Boolean constants
+  UNIT_TRUE: boolean = true;
+  UNIT_FALSE: boolean = false;
+
+  // String constants
+  UNIT_NAME: string = "bnf_unit_compliance";
+  UNIT_GREETING: string = "hello from unit";
+
+  // Untyped constants
+  UNIT_UNTYPED = 42;
+  UNIT_UNTYPED_STR = "untyped";
+
+  // Expression constants -- arithmetic
+  UNIT_DOUBLED: int32 = 21 * 2;
+  UNIT_SUM: int32 = 100 + 200;
+  UNIT_DIFF: int32 = 50 - 8;
+  UNIT_QUOTIENT: int32 = 100 div 3;
+  UNIT_REMAINDER: int32 = 100 mod 7;
+
+  // Expression constants -- grouped
+  UNIT_GROUPED: int32 = (10 + 5) * 2;
+
+  // Expression constants -- unary
+  UNIT_NEGATIVE: int32 = -100;
+
+  // Expression constants -- bitwise
+  UNIT_SHIFTED_L: int32 = 1 shl 8;
+  UNIT_SHIFTED_R: int32 = 256 shr 2;
+  UNIT_ANDED: int32 = 15 and 9;
+  UNIT_ORED: int32 = 10 or 5;
+  UNIT_XORED: int32 = 12 xor 10;
+
+  // Expression constants -- comparison
+  UNIT_IS_EQ: boolean = 5 = 5;
+  UNIT_NOT_EQ: boolean = 3 <> 4;
+
+  // Expression constants -- boolean logic
+  UNIT_BOTH: boolean = true and true;
+  UNIT_EITHER: boolean = false or true;
+  UNIT_NEGATED: boolean = not false;
+
+  // Const referencing another const
+  UNIT_COPY: int32 = UNIT_VERSION;
+
+// --- Private Constants (Section 8) ---
+
+const
+  PRIVATE_SECRET: int32 = 42;
+  PRIVATE_MAGIC: int64 = 12345678;
+
+// --- Public Types (Section 10) ---
+
+public type
+  // Choices (enum) -- plain
+  UnitColor = choices(ucRed, ucGreen, ucBlue = 5, ucAlpha);
+
+  // Choices (enum) -- sequential
+  UnitDir = choices(udNorth, udEast, udSouth, udWest);
+
+  // Plain record
+  UnitPoint = record
+    x: int32;
+    y: int32;
+  end;
+
+  // Packed record
+  UnitPacked = record packed
+    a: int8;
+    b: int32;
+  end;
+
+  // Aligned record
+  UnitAligned = record align(16)
+    val: int64;
+  end;
+
+  // Base record (for inheritance)
+  UnitBase = record
+    bx: int32;
+    by: int32;
+  end;
+
+  // Inherited record
+  UnitDerived = record(UnitBase)
+    dz: int32;
+  end;
+
+  // Nested records
+  UnitInner = record
+    iv: int32;
+  end;
+
+  UnitOuter = record
+    inner: UnitInner;
+    ov: int32;
+  end;
+
+  // Standalone overlay (union)
+  UnitOverlay = overlay
+    asInt: int64;
+    asFloat: float64;
+  end;
+
+  // Record with anonymous overlay
+  UnitTagged = record
+    tag: int32;
+    overlay
+      iVal: int64;
+      fVal: float64;
+    end;
+  end;
+
+  // Bit fields
+  UnitBits = record
+    lo: uint32 : 4;
+    hi: uint32 : 4;
+    mid: uint32 : 8;
+  end;
+
+  // Routine type (function pointer)
+  UnitBinOp = routine(x: int32; y: int32): int32;
+
+  // Record with routine-typed fields
+  UnitMathOps = record
+    addFn: UnitBinOp;
+    mulFn: UnitBinOp;
+  end;
+
+  // Pointer type
+  UnitIntPtr = pointer to int32;
+
+  // Pointer to const
+  UnitConstPtr = pointer to const int32;
+
+  // Static array type
+  UnitFixedArr = array[0..4] of int32;
+
+  // Dynamic array type
+  UnitDynArr = array of int32;
+
+  // Forward-declared record -- full definition
+  UnitForwardRec = record
+    fval: int32;
+    ftext: string;
+  end;
+
+  // Pointer to forward-declared type (valid because forward was seen)
+  UnitForwardPtr = pointer to UnitForwardRec;
+
+  // Record for record literal testing
+  UnitPerson = record
+    name: string;
+    age: int32;
+  end;
+
+  // Record with record-typed fields (nested literals)
+  UnitLine = record
+    start: UnitPoint;
+    finish: UnitPoint;
+  end;
+
+  // Set type
+  UnitSmallSet = set of 0..31;
+
+// --- Private Types (Section 10) ---
+
+type
+  TPrivateHelper = record
+    val: int32;
+  end;
+
+// --- Public Variables (Section 8) ---
+
+public var
+  unit_global_x: int32 = 0;
+  unit_global_str: string = "unit_default";
+  unit_global_flag: boolean = false;
+  unit_global_f64: float64 = 0.0;
+
+// --- Private Variables (Section 8) ---
+
+var
+  private_counter: int32 = 0;
+  private_buf: pointer to uint8;
+
+// --- Public Routines (Section 9) ---
+
+// Basic arithmetic
+public routine unit_add(a: int32; b: int32): int32;
+begin
+  return a + b;
+end;
+
+public routine unit_mul(a: int32; b: int32): int32;
+begin
+  return a * b;
+end;
+
+public routine unit_negate(val: int32): int32;
+begin
+  return -val;
+end;
+
+// Routine returning boolean
+public routine unit_is_positive(val: int32): boolean;
+begin
+  return val > 0;
+end;
+
+// Routine with loops and compound assignment
+public routine unit_factorial(n: int32): int32;
+var
+  result: int32 = 1;
+  i: int32;
+begin
+  for i := 1 to n do
+    result *= i;
+  end;
+  return result;
+end;
+
+// Routine with local const and var sections
+public routine unit_with_locals(): int32;
+const
+  LOCAL_CONST: int32 = 10;
+var
+  lval: int32;
+begin
+  lval := LOCAL_CONST * 2;
+  return lval;
+end;
+
+// Routine with pointer parameter
+public routine unit_deref(p: pointer to int32): int32;
+begin
+  return p^;
+end;
+
+// Routine returning a record
+public routine unit_make_point(px: int32; py: int32): UnitPoint;
+var
+  result: UnitPoint;
+begin
+  result.x := px;
+  result.y := py;
+  return result;
+end;
+
+// Routine that throws (for exception propagation testing)
+public routine unit_throw_error();
+begin
+  throw("unit error");
+end;
+
+// Routine with guard/except
+public routine unit_safe_div(a: int32; b: int32): int32;
+var
+  result: int32 = 0;
+begin
+  guard
+    result := a div b;
+  except
+    result := -1;
+  end;
+  return result;
+end;
+
+// Routine using match statement
+public routine unit_classify(val: int32): int32;
+begin
+  match val of
+    0: return 0;
+    1, 2, 3: return 1;
+    4..10: return 2;
+  else
+    return 3;
+  end;
+  return -1;
+end;
+
+// Routine using while and break
+public routine unit_find_first_div(n: int32; d: int32): int32;
+var
+  i: int32 = 1;
+begin
+  while i <= n do
+    if i mod d = 0 then
+      return i;
+    end;
+    i += 1;
+  end;
+  return -1;
+end;
+
+// Routine using repeat..until
+public routine unit_count_down(start: int32): int32;
+var
+  val: int32;
+  count: int32 = 0;
+begin
+  val := start;
+  repeat
+    val -= 1;
+    count += 1;
+  until val <= 0;
+  return count;
+end;
+
+// Routine with const parameter (explicit)
+public routine unit_const_param(const a: int32; const b: int32): int32;
+begin
+  return a + b;
+end;
+
+// Routine with var parameter
+public routine unit_var_param(var result: int32; a: int32; b: int32);
+begin
+  result := a + b;
+end;
+
+// Forward-declared routine -- full definition
+routine unit_forward_add(a: int32; b: int32): int32;
+begin
+  return a + b;
+end;
+
+// Overloaded routines (Section 9 -- implicit cpplink promotion)
+public routine unit_overloaded(a: int32; b: int32): int32;
+begin
+  return a + b;
+end;
+
+public routine unit_overloaded(a: float64; b: float64): float64;
+begin
+  return a + b;
+end;
+
+public routine unit_overloaded(a: int32; b: int32; c: int32): int32;
+begin
+  return a + b + c;
+end;
+
+// Routine managing private state
+public routine unit_increment(): int32;
+begin
+  private_counter += 1;
+  return private_counter;
+end;
+
+public routine unit_get_counter(): int32;
+begin
+  return private_counter;
+end;
+
+public routine unit_reset_counter();
+begin
+  private_counter := 0;
+end;
+
+// Routine with inline var decl
+public routine unit_inline_vars(a: int32; b: int32): int32;
+begin
+  var sum: int32 = a + b;
+  var doubled: int32 = sum * 2;
+  return doubled;
+end;
+
+// Routine with clink linkage (explicit)
+public routine clink unit_clink_add(a: int32; b: int32): int32;
+begin
+  return a + b;
+end;
+
+// --- Private Routines ---
+
+routine private_helper(): int32;
+begin
+  return PRIVATE_SECRET;
+end;
+
+routine private_compute(a: int32): int32;
+begin
+  return a * private_helper();
+end;
+
+// --- Initialize / Finalize (Section 6) ---
+
+initialize
+  unit_global_x := 1;
+  unit_global_flag := true;
+  private_counter := 0;
+end;
+
+finalize
+  unit_global_x := 0;
+  unit_global_flag := false;
+end;
+
+end.
+
+// --- Test Blocks (Section 15) ---
+// These compile only when @unittestmode on; is active.
+
+test "unit constants are correct"
+begin
+  asserteq(1, UNIT_VERSION);
+  asserteq(42, UNIT_DOUBLED);
+  asserteq(256, UNIT_SHIFTED_L);
+  asserteq(30, UNIT_GROUPED);
+  asserteq(-100, UNIT_NEGATIVE);
+  asserttrue(UNIT_TRUE);
+  assertfalse(UNIT_FALSE);
+  asserteq(255, UNIT_MAX_U8);
+end;
+
+test "unit_add returns correct sum"
+begin
+  asserteq(7, unit_add(3, 4));
+  asserteq(0, unit_add(-5, 5));
+  asserteq(-8, unit_add(-3, -5));
+end;
+
+test "unit_mul returns correct product"
+begin
+  asserteq(12, unit_mul(3, 4));
+  asserteq(0, unit_mul(0, 100));
+  asserteq(25, unit_mul(-5, -5));
+end;
+
+test "unit_factorial computes correctly"
+begin
+  asserteq(1, unit_factorial(1));
+  asserteq(6, unit_factorial(3));
+  asserteq(120, unit_factorial(5));
+end;
+
+test "unit_overloaded resolves by signature"
+begin
+  asserteq(3, unit_overloaded(1, 2));
+  asserteq(6, unit_overloaded(1, 2, 3));
+end;
+
+test "unit_is_positive works"
+begin
+  asserttrue(unit_is_positive(1));
+  asserttrue(unit_is_positive(100));
+  assertfalse(unit_is_positive(-1));
+  assertfalse(unit_is_positive(0));
+end;
+
+test "unit counter tracks state"
+begin
+  unit_reset_counter();
+  asserteq(0, unit_get_counter());
+  asserteq(1, unit_increment());
+  asserteq(2, unit_increment());
+  asserteq(2, unit_get_counter());
+end;
+
+test "unit_safe_div handles zero"
+begin
+  asserteq(5, unit_safe_div(10, 2));
+  asserteq(-1, unit_safe_div(10, 0));
+end;
+
+test "unit_classify returns correct category"
+begin
+  asserteq(0, unit_classify(0));
+  asserteq(1, unit_classify(2));
+  asserteq(2, unit_classify(7));
+  asserteq(3, unit_classify(99));
+end;
+
+test "private_helper accessible within unit"
+begin
+  asserteq(42, private_helper());
+  asserteq(210, private_compute(5));
+end;
+
+test "unit_forward_add resolves"
+begin
+  asserteq(15, unit_forward_add(7, 8));
+end;

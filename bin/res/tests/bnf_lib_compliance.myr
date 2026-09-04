@@ -1,0 +1,121 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_lib_compliance.myr
+
+  BNF compliance test for the 'lib' module kind. Exercises public/private
+  declarations, exported routines and variables, initialize/finalize blocks,
+  and verifies that the LIB produces a static library.
+
+  This LIB is consumed by test_exe_lib_compliance.myr.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module lib bnf_lib_compliance;
+
+// --- Public Constants ---
+public const
+  LIB_VERSION: int32 = 1;
+  LIB_NAME: string = "bnf_lib_compliance";
+  LIB_PI: float64 = 3.14159265;
+
+// --- Public Variables ---
+public var
+  lib_init_count: int32 = 0;
+  lib_final_count: int32 = 0;
+  lib_global_x: int32 = 0;
+
+// --- Private helper (not exported) ---
+routine helper_double(const x: int32): int32;
+begin
+  return x * 2;
+end;
+
+// --- Public Routines (exported) ---
+public routine clink lib_add(const a: int32; const b: int32): int32;
+begin
+  return a + b;
+end;
+
+public routine clink lib_mul(const a: int32; const b: int32): int32;
+begin
+  return a * b;
+end;
+
+public routine clink lib_negate(const x: int32): int32;
+begin
+  return -x;
+end;
+
+public routine clink lib_quadruple(const x: int32): int32;
+begin
+  return helper_double(helper_double(x));
+end;
+
+public routine clink lib_factorial(const n: int32): int32;
+var
+  result: int32;
+  i: int32;
+begin
+  result := 1;
+  for i := 2 to n do
+    result := result * i;
+  end;
+  return result;
+end;
+
+public routine clink lib_is_positive(const x: int32): boolean;
+begin
+  return x > 0;
+end;
+
+public routine clink lib_set_global(const x: int32);
+begin
+  lib_global_x := x;
+end;
+
+public routine clink lib_get_global(): int32;
+begin
+  return lib_global_x;
+end;
+
+// --- Public Types ---
+public type
+  LibColor = choices(lcRed, lcGreen, lcBlue);
+
+public type
+  LibPoint = record
+    x: int32;
+    y: int32;
+  end;
+
+public routine clink lib_make_point(const ax: int32; const ay: int32): LibPoint;
+var
+  p: LibPoint;
+begin
+  p := LibPoint(x: ax, y: ay);
+  return p;
+end;
+
+// --- Initialize block ---
+initialize
+  lib_init_count := 1;
+  lib_global_x := 42;
+  println("lib init");
+end;
+
+// --- Finalize block ---
+finalize
+  lib_final_count := 1;
+  println("lib final");
+end;
+
+end.

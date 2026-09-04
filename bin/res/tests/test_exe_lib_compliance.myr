@@ -1,0 +1,159 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  test_exe_lib_compliance.myr
+
+  Companion test exe for bnf_lib_compliance.myr. Links against the static
+  library and exercises every public symbol to verify LIB exports,
+  initialization, and cross-module access.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module exe test_exe_lib_compliance;
+
+@addlibrarypath "output";
+
+// Local type definitions (matching LIB types)
+public type
+  LibColor = choices(lcRed, lcGreen, lcBlue);
+
+public type
+  LibPoint = record
+    x: int32;
+    y: int32;
+  end;
+
+// Import LIB routines via external clause
+routine clink lib_add(const a: int32; const b: int32): int32; external "bnf_lib_compliance";
+routine clink lib_mul(const a: int32; const b: int32): int32; external "bnf_lib_compliance";
+routine clink lib_negate(const x: int32): int32; external "bnf_lib_compliance";
+routine clink lib_quadruple(const x: int32): int32; external "bnf_lib_compliance";
+routine clink lib_factorial(const n: int32): int32; external "bnf_lib_compliance";
+routine clink lib_is_positive(const x: int32): boolean; external "bnf_lib_compliance";
+routine clink lib_set_global(const x: int32); external "bnf_lib_compliance";
+routine clink lib_get_global(): int32; external "bnf_lib_compliance";
+routine clink lib_make_point(const ax: int32; const ay: int32): LibPoint; external "bnf_lib_compliance";
+
+// Import LIB variables
+var lib_init_count: int32; external "bnf_lib_compliance";
+var lib_global_x: int32; external "bnf_lib_compliance";
+
+var
+  passed: int32;
+  total: int32;
+
+initialize
+  println("exe init");
+end;
+
+finalize
+  println("exe final");
+end;
+
+begin
+  println("=== Test LIB Compliance ===");
+  passed := 0;
+  total := 0;
+
+  // --- Arithmetic routines ---
+  println("\n--- Routines ---");
+
+  total := total + 1;
+  if lib_add(3, 4) = 7 then
+    passed := passed + 1;
+    println("lib_add(3, 4) = %d", lib_add(3, 4));
+  end;
+
+  total := total + 1;
+  if lib_mul(6, 7) = 42 then
+    passed := passed + 1;
+    println("lib_mul(6, 7) = %d", lib_mul(6, 7));
+  end;
+
+  total := total + 1;
+  if lib_negate(42) = -42 then
+    passed := passed + 1;
+    println("lib_negate(42) = %d", lib_negate(42));
+  end;
+
+  total := total + 1;
+  if lib_quadruple(4) = 16 then
+    passed := passed + 1;
+    println("lib_quadruple(4) = %d", lib_quadruple(4));
+  end;
+
+  total := total + 1;
+  if lib_factorial(5) = 120 then
+    passed := passed + 1;
+    println("lib_factorial(5) = %d", lib_factorial(5));
+  end;
+
+  total := total + 1;
+  if lib_is_positive(1) = true then
+    passed := passed + 1;
+    println("lib_is_positive(1) = %d", lib_is_positive(1));
+  end;
+
+  total := total + 1;
+  if lib_is_positive(-1) = false then
+    passed := passed + 1;
+    println("lib_is_positive(-1) = %d", lib_is_positive(-1));
+  end;
+
+  // --- Variables ---
+  println("\n--- Variables ---");
+
+  total := total + 1;
+  if lib_init_count = 1 then
+    passed := passed + 1;
+    println("lib_init_count = %d", lib_init_count);
+  end;
+
+  total := total + 1;
+  if lib_global_x = 42 then
+    passed := passed + 1;
+    println("lib_global_x = %d", lib_global_x);
+  end;
+
+  // --- Global state via routines ---
+  println("\n--- Global State ---");
+
+  lib_set_global(99);
+  total := total + 1;
+  if lib_get_global() = 99 then
+    passed := passed + 1;
+    println("after set_global(99): get_global() = %d", lib_get_global());
+  end;
+
+  // --- Record return ---
+  println("\n--- Record Return ---");
+
+  var p: LibPoint;
+  p := lib_make_point(10, 20);
+  total := total + 1;
+  if p.x = 10 then
+    passed := passed + 1;
+  end;
+  total := total + 1;
+  if p.y = 20 then
+    passed := passed + 1;
+  end;
+  println("lib_make_point(10, 20) = (%d, %d)", p.x, p.y);
+
+  // --- Summary ---
+  println("\nlib compliance: %d / %d passed", passed, total);
+  if passed = total then
+    println("=== All LIB compliance tests passed ===");
+  else
+    println("=== SOME LIB TESTS FAILED ===");
+  end;
+  asserteq(passed, total, "lib compliance");
+end.

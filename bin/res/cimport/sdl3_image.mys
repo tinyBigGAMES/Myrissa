@@ -1,0 +1,33 @@
+/*******************************************************************************
+  CPaskal™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://cpaskal.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  sdl3_image.cps
+
+  CImport script for SDL3_image - Image loading library for SDL3. Generates
+  CPaskal bindings from the SDL3_image C headers.
+*******************************************************************************/
+
+module script sdl3_image;
+
+begin
+  SetSavePreprocessed(false);
+  SetBindingMode("dynamic");
+  SetModuleName("SDL3_image");
+  SetDllName("SDL3_image");
+  SetOutputPath("res/libs/vendor/sdl3_image");
+  SetDllPath("res/libs/vendor/sdl3_image/win64/SDL3_image.dll");
+  AddIncludePath("res/libs/vendor/sdl3/include", "");
+  AddSourcePath("res/libs/vendor/sdl3_image/include/SDL3");
+  AddUsesUnit("SDL3");
+  AddExcludedType("va_list");
+  SetHeader("res/libs/vendor/sdl3_image/include/SDL3/SDL_image.h");
+  AddCopyDll("win64", "$P:res/libs/vendor/sdl3_image/win64/SDL3_image.dll");
+  Process();
+end.

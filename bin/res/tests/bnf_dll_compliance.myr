@@ -1,0 +1,121 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_dll_compliance.myr
+
+  BNF compliance test for the 'dll' module kind. Exercises public/private
+  declarations, exported routines and variables, initialize/finalize blocks,
+  and verifies that the DLL produces a shared library.
+
+  This DLL is consumed by test_exe_dll_compliance.myr.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module dll bnf_dll_compliance;
+
+// --- Public Constants ---
+public const
+  DLL_VERSION: int32 = 1;
+  DLL_NAME: string = "bnf_dll_compliance";
+  DLL_PI: float64 = 3.14159265;
+
+// --- Public Variables ---
+public var
+  dll_init_count: int32 = 0;
+  dll_final_count: int32 = 0;
+  dll_global_x: int32 = 0;
+
+// --- Private helper (not exported) ---
+routine helper_double(const x: int32): int32;
+begin
+  return x * 2;
+end;
+
+// --- Public Routines (exported) ---
+public routine clink dll_add(const a: int32; const b: int32): int32;
+begin
+  return a + b;
+end;
+
+public routine clink dll_mul(const a: int32; const b: int32): int32;
+begin
+  return a * b;
+end;
+
+public routine clink dll_negate(const x: int32): int32;
+begin
+  return -x;
+end;
+
+public routine clink dll_quadruple(const x: int32): int32;
+begin
+  return helper_double(helper_double(x));
+end;
+
+public routine clink dll_factorial(const n: int32): int32;
+var
+  result: int32;
+  i: int32;
+begin
+  result := 1;
+  for i := 2 to n do
+    result := result * i;
+  end;
+  return result;
+end;
+
+public routine clink dll_is_positive(const x: int32): boolean;
+begin
+  return x > 0;
+end;
+
+public routine clink dll_set_global(const x: int32);
+begin
+  dll_global_x := x;
+end;
+
+public routine clink dll_get_global(): int32;
+begin
+  return dll_global_x;
+end;
+
+// --- Public Types ---
+public type
+  DllColor = choices(dcRed, dcGreen, dcBlue);
+
+public type
+  DllPoint = record
+    x: int32;
+    y: int32;
+  end;
+
+public routine clink dll_make_point(const ax: int32; const ay: int32): DllPoint;
+var
+  p: DllPoint;
+begin
+  p := DllPoint(x: ax, y: ay);
+  return p;
+end;
+
+// --- Initialize block ---
+initialize
+  dll_init_count := 1;
+  dll_global_x := 42;
+  println("dll init");
+end;
+
+// --- Finalize block ---
+finalize
+  dll_final_count := 1;
+  println("dll final");
+end;
+
+end.

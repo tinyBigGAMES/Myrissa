@@ -1,0 +1,42 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_link_lib_outer.myr
+
+  Outer static lib that depends on bnf_link_lib_inner. Tests
+  lib-to-lib linking.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module lib bnf_link_lib_outer;
+
+@addlibrarypath "$P:output";
+
+routine clink inner_get(): int32; external "bnf_link_lib_inner";
+routine clink inner_safe_div(const a: int32; const b: int32): int32; external "bnf_link_lib_inner";
+
+public var outer_val: int32 = 0;
+
+public routine clink outer_get(): int32;
+begin
+  return outer_val;
+end;
+
+public routine clink outer_safe_div(const a: int32; const b: int32): int32;
+begin
+  return inner_safe_div(a, b);
+end;
+
+initialize
+  outer_val := inner_get() + 10;
+end;
+
+end.

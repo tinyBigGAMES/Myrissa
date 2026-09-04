@@ -1,0 +1,34 @@
+/*******************************************************************************
+  CPaskal™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://cpaskal.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  raylib.cps
+
+  CImport script for raylib - a simple and easy-to-use library for game
+  programming. Generates CPaskal bindings from the raylib C header.
+*******************************************************************************/
+
+module script raylib;
+
+begin
+  SetSavePreprocessed(false);
+  SetBindingMode("dynamic");
+  SetModuleName("raylib");
+  SetDllName("raylib");
+  SetOutputPath("res/libs/vendor/raylib");
+  SetDllPath("res/libs/vendor/raylib/win64/raylib.dll");
+  AddIncludePath("res/libs/vendor/raylib/include", "");
+  AddSourcePath("res/libs/vendor/raylib/include");
+  AddExcludedType("va_list");
+  SetHeader("res/libs/vendor/raylib/include/raylib.h");
+  AddCopyDll("win64", "$P:res/libs/vendor/raylib/win64/raylib.dll");
+  AddCopyDll("linux64", "$P:res/libs/vendor/raylib/linux64/libraylib.so.550");
+  AddLinkLibrary("linux64", "$P:res/libs/vendor/raylib/linux64/");
+  Process();
+end.

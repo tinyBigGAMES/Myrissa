@@ -1,0 +1,46 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  bnf_link_lib_inner.myr
+
+  Inner static lib for transitive linking tests. Provides a counter
+  and guarded division.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module lib bnf_link_lib_inner;
+
+public var inner_counter: int32 = 0;
+
+public routine clink inner_get(): int32;
+begin
+  return inner_counter;
+end;
+
+// try/except inside a static lib (SEH codegen)
+public routine clink inner_safe_div(const a: int32; const b: int32): int32;
+var
+  r: int32;
+begin
+  r := 0;
+  guard
+    r := a div b;
+  except
+    r := -1;
+  end;
+  return r;
+end;
+
+initialize
+  inner_counter := 1;
+end;
+
+end.

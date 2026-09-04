@@ -1,0 +1,266 @@
+﻿/*******************************************************************************
+  Myrissa™ Programming Language
+
+  Copyright © 2026-present tinyBigGAMES™ LLC
+  All Rights Reserved.
+
+  https://myrissa.org
+
+  See LICENSE for license information
+ -------------------------------------------------------------------------------
+  test_exe_unit_compliance.myr
+
+  Companion test exe for bnf_unit_compliance.myr. Imports the unit and
+  exercises every public symbol to verify cross-module access, visibility,
+  and correct behavior.
+*******************************************************************************/
+
+/* EXITCODE: 0 */
+/* ALLOW_WARNINGS */
+module exe test_exe_unit_compliance;
+
+@target linux64;
+
+import bnf_unit_compliance;
+
+begin
+  println("=== Test Unit Compliance ===");
+  
+    // --- Public Constants ---
+  println("\n--- Constants ---");
+  println("UNIT_VERSION = %d", bnf_unit_compliance.UNIT_VERSION);
+  println("UNIT_MAX_VAL = %d", bnf_unit_compliance.UNIT_MAX_VAL);
+  println("UNIT_MAX_U8 = %d", bnf_unit_compliance.UNIT_MAX_U8);
+  println("UNIT_MAX_U16 = %d", bnf_unit_compliance.UNIT_MAX_U16);
+  println("UNIT_PI = %d", bnf_unit_compliance.UNIT_PI);
+  println("UNIT_HALF = %d", bnf_unit_compliance.UNIT_HALF);
+  println("UNIT_TRUE = %d", bnf_unit_compliance.UNIT_TRUE);
+  println("UNIT_FALSE = %d", bnf_unit_compliance.UNIT_FALSE);
+  println("UNIT_NAME = %d", bnf_unit_compliance.UNIT_NAME);
+  println("UNIT_GREETING = %d", bnf_unit_compliance.UNIT_GREETING);
+  println("UNIT_UNTYPED = %d", bnf_unit_compliance.UNIT_UNTYPED);
+  println("UNIT_DOUBLED = %d", bnf_unit_compliance.UNIT_DOUBLED);
+  println("UNIT_SUM = %d", bnf_unit_compliance.UNIT_SUM);
+  println("UNIT_DIFF = %d", bnf_unit_compliance.UNIT_DIFF);
+  println("UNIT_QUOTIENT = %d", bnf_unit_compliance.UNIT_QUOTIENT);
+  println("UNIT_REMAINDER = %d", bnf_unit_compliance.UNIT_REMAINDER);
+  println("UNIT_GROUPED = %d", bnf_unit_compliance.UNIT_GROUPED);
+  println("UNIT_NEGATIVE = %d", bnf_unit_compliance.UNIT_NEGATIVE);
+  println("UNIT_SHIFTED_L = %d", bnf_unit_compliance.UNIT_SHIFTED_L);
+  println("UNIT_SHIFTED_R = %d", bnf_unit_compliance.UNIT_SHIFTED_R);
+  println("UNIT_ANDED = %d", bnf_unit_compliance.UNIT_ANDED);
+  println("UNIT_ORED = %d", bnf_unit_compliance.UNIT_ORED);
+  println("UNIT_XORED = %d", bnf_unit_compliance.UNIT_XORED);
+  println("UNIT_IS_EQ = %d", bnf_unit_compliance.UNIT_IS_EQ);
+  println("UNIT_NOT_EQ = %d", bnf_unit_compliance.UNIT_NOT_EQ);
+  println("UNIT_BOTH = %d", bnf_unit_compliance.UNIT_BOTH);
+  println("UNIT_EITHER = %d", bnf_unit_compliance.UNIT_EITHER);
+  println("UNIT_NEGATED = %d", bnf_unit_compliance.UNIT_NEGATED);
+  println("UNIT_COPY = %d", bnf_unit_compliance.UNIT_COPY);
+
+  // --- Public Routines: Basic ---
+  println("\n--- Basic Routines ---");
+  println("unit_add(3, 4) = %d", bnf_unit_compliance.unit_add(3, 4));
+  println("unit_add(-5, 5) = %d", bnf_unit_compliance.unit_add(-5, 5));
+  println("unit_mul(6, 7) = %d", bnf_unit_compliance.unit_mul(6, 7));
+  println("unit_negate(42) = %d", bnf_unit_compliance.unit_negate(42));
+  println("unit_is_positive(1) = %d", bnf_unit_compliance.unit_is_positive(1));
+  println("unit_is_positive(-1) = %d", bnf_unit_compliance.unit_is_positive(-1));
+  println("unit_is_positive(0) = %d", bnf_unit_compliance.unit_is_positive(0));
+
+  // --- Routine with loops ---
+  println("\n--- Factorial ---");
+  println("factorial(1) = %d", bnf_unit_compliance.unit_factorial(1));
+  println("factorial(5) = %d", bnf_unit_compliance.unit_factorial(5));
+  println("factorial(7) = %d", bnf_unit_compliance.unit_factorial(7));
+
+  // --- Routine with local const/var ---
+  println("\n--- Locals ---");
+  println("unit_with_locals() = %d", bnf_unit_compliance.unit_with_locals());
+
+  // --- Pointer parameter ---
+  println("\n--- Pointer Param ---");
+  var px: int32 = 99;
+  var pp: pointer to int32 = address of px;
+  println("unit_deref(&99) = %d", bnf_unit_compliance.unit_deref(pp));
+
+  // --- Routine returning record ---
+  println("\n--- Record Return ---");
+  var pt: bnf_unit_compliance.UnitPoint = bnf_unit_compliance.unit_make_point(10, 20);
+  println("make_point(10,20) = (%d, %d)", pt.x, pt.y);
+
+  // --- Match-based classify ---
+  println("\n--- Classify ---");
+  println("classify(0) = %d", bnf_unit_compliance.unit_classify(0));
+  println("classify(2) = %d", bnf_unit_compliance.unit_classify(2));
+  println("classify(7) = %d", bnf_unit_compliance.unit_classify(7));
+  println("classify(99) = %d", bnf_unit_compliance.unit_classify(99));
+
+  // --- While/break routine ---
+  println("\n--- Find First Divisible ---");
+  println("find_first_div(20, 7) = %d", bnf_unit_compliance.unit_find_first_div(20, 7));
+  println("find_first_div(10, 3) = %d", bnf_unit_compliance.unit_find_first_div(10, 3));
+
+  // --- Repeat..until routine ---
+  println("\n--- Count Down ---");
+  println("count_down(5) = %d", bnf_unit_compliance.unit_count_down(5));
+  println("count_down(1) = %d", bnf_unit_compliance.unit_count_down(1));
+
+  // --- Const and var parameter routines ---
+  println("\n--- Param Modifiers ---");
+  println("const_param(3, 4) = %d", bnf_unit_compliance.unit_const_param(3, 4));
+  var vp_result: int32;
+  bnf_unit_compliance.unit_var_param(vp_result, 10, 20);
+  println("var_param result = %d", vp_result);
+
+  // --- Overloaded routines ---
+  println("\n--- Overloads ---");
+  println("overloaded(1, 2) = %d", bnf_unit_compliance.unit_overloaded(1, 2));
+  println("overloaded(1.5, 2.5) = %d", bnf_unit_compliance.unit_overloaded(1.5, 2.5));
+  println("overloaded(1, 2, 3) = %d", bnf_unit_compliance.unit_overloaded(1, 2, 3));
+
+  // --- Counter (private state management) ---
+  println("\n--- Counter ---");
+  bnf_unit_compliance.unit_reset_counter();
+  println("after reset: %d", bnf_unit_compliance.unit_get_counter());
+  println("increment: %d", bnf_unit_compliance.unit_increment());
+  println("increment: %d", bnf_unit_compliance.unit_increment());
+  println("counter: %d", bnf_unit_compliance.unit_get_counter());
+
+  // --- Inline vars routine ---
+  println("\n--- Inline Vars ---");
+  println("inline_vars(3, 4) = %d", bnf_unit_compliance.unit_inline_vars(3, 4));
+
+  // --- clink routine ---
+  println("\n--- CLink ---");
+  println("clink_add(5, 6) = %d", bnf_unit_compliance.unit_clink_add(5, 6));
+
+  // --- Safe div (guard/except) ---
+  println("\n--- Safe Div ---");
+  println("safe_div(10, 2) = %d", bnf_unit_compliance.unit_safe_div(10, 2));
+  println("safe_div(10, 0) = %d", bnf_unit_compliance.unit_safe_div(10, 0));
+
+  // --- Exception propagation from unit ---
+  println("\n--- Exception Propagation ---");
+  guard
+    bnf_unit_compliance.unit_throw_error();
+  except
+    println("caught unit error: code=%lld, msg=%s", exccode(), excmsg());
+  end;
+
+  // --- Public variables ---
+  println("\n--- Public Vars ---");
+  println("unit_global_x = %d", bnf_unit_compliance.unit_global_x);
+  println("unit_global_str = %d", bnf_unit_compliance.unit_global_str);
+  println("unit_global_flag = %d", bnf_unit_compliance.unit_global_flag);
+  println("unit_global_f64 = %d", bnf_unit_compliance.unit_global_f64);
+
+  // Modify public var and read back
+  bnf_unit_compliance.unit_global_x := 42;
+  println("after write: unit_global_x = %d", bnf_unit_compliance.unit_global_x);
+
+  // --- Public types used locally ---
+  println("\n--- Public Types ---");
+
+  // Choices
+  var c: bnf_unit_compliance.UnitColor = bnf_unit_compliance.UnitColor.ucBlue;
+  println("UnitColor.ucBlue = %d", c);
+  println("UnitColor.ucRed = %d", bnf_unit_compliance.UnitColor.ucRed);
+  println("UnitColor.ucAlpha = %d", bnf_unit_compliance.UnitColor.ucAlpha);
+  println("UnitDir.udNorth = %d", bnf_unit_compliance.UnitDir.udNorth);
+  println("UnitDir.udWest = %d", bnf_unit_compliance.UnitDir.udWest);
+
+  // Plain record
+  var rp: bnf_unit_compliance.UnitPoint;
+  rp.x := 100;
+  rp.y := 200;
+  println("UnitPoint (%d, %d)", rp.x, rp.y);
+
+  // Packed record
+  var rpk: bnf_unit_compliance.UnitPacked;
+  rpk.a := 1;
+  rpk.b := 1000;
+  println("UnitPacked a=%d b=%d", rpk.a, rpk.b);
+
+  // Aligned record
+  var ral: bnf_unit_compliance.UnitAligned;
+  ral.val := 77;
+  println("UnitAligned val=%d", ral.val);
+
+  // Inherited record
+  var rdr: bnf_unit_compliance.UnitDerived;
+  rdr.bx := 10;
+  rdr.by := 20;
+  rdr.dz := 30;
+  println("UnitDerived %d %d %d", rdr.bx, rdr.by, rdr.dz);
+
+  // Nested record
+  var rot: bnf_unit_compliance.UnitOuter;
+  rot.inner.iv := 42;
+  rot.ov := 99;
+  println("UnitOuter %d %d", rot.inner.iv, rot.ov);
+
+  // Overlay
+  var rov: bnf_unit_compliance.UnitOverlay;
+  rov.asInt := 42;
+  println("UnitOverlay int=%d", rov.asInt);
+  rov.asFloat := 2.718;
+  println("UnitOverlay float=%d", rov.asFloat);
+
+  // Tagged record (anon overlay)
+  var rtg: bnf_unit_compliance.UnitTagged;
+  rtg.tag := 1;
+  rtg.iVal := 9999;
+  println("UnitTagged %d %d", rtg.tag, rtg.iVal);
+
+  // Bit fields
+  var rbf: bnf_unit_compliance.UnitBits;
+  rbf.lo := 7;
+  rbf.hi := 12;
+  rbf.mid := 255;
+  println("UnitBits lo=%d hi=%d mid=%d", rbf.lo, rbf.hi, rbf.mid);
+
+  // Routine type
+  var fp: bnf_unit_compliance.UnitBinOp = bnf_unit_compliance.unit_add;
+  println("UnitBinOp(3,4) = %d", fp(3, 4));
+  fp := bnf_unit_compliance.unit_mul;
+  println("UnitBinOp(3,4) = %d", fp(3, 4));
+
+  // Record with routine-typed fields
+  var rmo: bnf_unit_compliance.UnitMathOps;
+  rmo.addFn := bnf_unit_compliance.unit_add;
+  rmo.mulFn := bnf_unit_compliance.unit_mul;
+  println("MathOps add=%d mul=%d", rmo.addFn(5, 6), rmo.mulFn(5, 6));
+
+  // Forward-declared record (used as a normal type)
+  var rfr: bnf_unit_compliance.UnitForwardRec;
+  rfr.fval := 123;
+  rfr.ftext := "forward works";
+  println("UnitForwardRec val=%d text=%d", rfr.fval, rfr.ftext);
+
+  // Record literal
+  var rpl: bnf_unit_compliance.UnitPoint = bnf_unit_compliance.UnitPoint(x: 42, y: 99);
+  println("record literal (%d, %d)", rpl.x, rpl.y);
+
+  // Record literal with string fields
+  var rpn: bnf_unit_compliance.UnitPerson = bnf_unit_compliance.UnitPerson(name: "Alice", age: 30);
+  println("person %d age %d", rpn.name, rpn.age);
+
+  // Nested record literal
+  var rln: bnf_unit_compliance.UnitLine = bnf_unit_compliance.UnitLine(
+    start: bnf_unit_compliance.UnitPoint(x: 1, y: 2),
+    finish: bnf_unit_compliance.UnitPoint(x: 10, y: 20)
+  );
+  println("line (%d,%d) -> (%d,%d)", rln.start.x, rln.start.y, rln.finish.x, rln.finish.y);
+
+  // Static array type
+  var arr: bnf_unit_compliance.UnitFixedArr;
+  arr[0] := 10;
+  arr[1] := 20;
+  arr[2] := 30;
+  arr[3] := 40;
+  arr[4] := 50;
+  println("UnitFixedArr[2] = %d", arr[2]);
+
+  println("\n=== All unit compliance tests passed ===");
+end.

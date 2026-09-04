@@ -92,7 +92,6 @@ checkpoint_base.zip
 distro.yml
 /extlibs
 src/DllLoader/lib/DllLoader.obj
-/bin
 docs/Brief.mp4
 docs/DeepDive.m4a
 docs/Docs.html
@@ -103,3 +102,10 @@ docs/Myrissa.pdf
 ref_README.md
 --help
 /temp
+bin/build-myr.cmd
+bin/myrtester.txt
+/bin/res/assets
+/bin/res/libs/vendor
+bin/res/tests/tests.json
+bin/run-myr.cmd
+bin/run-myrtester.cmd
