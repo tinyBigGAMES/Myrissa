@@ -32,7 +32,11 @@ The compiler is one executable, `myr.exe`. That is the install.
 
 ![Myrissa Infographic](media/Infographic.jpg)
 
-https://github.com/user-attachments/assets/62ff149a-4701-4bd4-8865-666426e88744
+
+
+https://github.com/user-attachments/assets/b274679d-2da2-447e-b7bb-af876a7d6aea
+
+
 
 </div>
 
