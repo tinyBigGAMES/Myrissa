@@ -14,7 +14,6 @@ Going forward, **PaskalCPP will be my primary focus and long-term language devel
 
 - **GitHub:** https://github.com/tinyBigGAMES/PaskalCPP
 - **Website:** https://paskalcpp.org
-- **Community:** https://paskalcpp.org/community
 
 This repository will remain available for historical reference and for anyone who may find its code, ideas, or approach useful.
 
